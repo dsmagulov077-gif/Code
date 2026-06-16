@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --bg: #f5f4ef;
   --card: #fbfaf7;
@@ -84,3 +88,303 @@ button.small { padding: 6px 10px; font-size: 14px; }
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+
+/* ===== Игра Kick the Buddy ===== */
+.game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.save-status {
+  font-size: 12px;
+  color: var(--soft);
+  min-width: 100px;
+  text-align: right;
+}
+
+.game-stats {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.stat-label { font-size: 12px; color: var(--soft); }
+.stat-value { font-size: 18px; font-weight: 700; }
+
+.hp-bar {
+  position: relative;
+  height: 26px;
+  background: #eceae3;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.hp-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.hp-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a1a;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+.arena {
+  position: relative;
+  height: 280px;
+  background: linear-gradient(180deg, #fef6f2 0%, #f7efe9 100%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.buddy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.damage-number {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-weight: 800;
+  font-size: 20px;
+  color: #e53935;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.damage-number.crit {
+  color: #ff6d00;
+  font-size: 26px;
+}
+
+.ko-text {
+  position: absolute;
+  font-size: 32px;
+  font-weight: 900;
+  color: var(--clay);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.arena-hint {
+  position: absolute;
+  bottom: 12px;
+  color: var(--soft);
+  font-size: 13px;
+}
+
+.weapons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+.weapon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 4px;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.weapon.active {
+  border-color: var(--clay);
+  background: #fdf1ec;
+}
+.weapon-emoji { font-size: 24px; }
+.weapon-name { font-size: 12px; }
+.weapon-dmg { font-size: 11px; color: var(--soft); }
+.weapon-price { font-size: 11px; color: #c9851f; font-weight: 700; }
+
+/* Магазин особых оружий */
+.shop-title {
+  margin-top: 18px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.weapon.special {
+  border-color: #e6c200;
+  background: linear-gradient(180deg, #fffbe6 0%, #fff6cc 100%);
+}
+.weapon.special.active {
+  border-color: var(--clay);
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.25);
+}
+.weapon.special.locked {
+  opacity: 0.55;
+}
+
+/* Анимация победы */
+.victory-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.victory-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, #fff 0%, #ffd54f 60%, transparent 100%);
+}
+.victory-emoji {
+  font-size: 90px;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.25));
+}
+.victory-particle {
+  position: absolute;
+  font-size: 28px;
+}
+.victory-banner {
+  position: absolute;
+  bottom: 36px;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #fff;
+  -webkit-text-stroke: 2px var(--clay);
+  text-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* ===== Магазин аксессуаров ===== */
+.accessories {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 0;
+}
+
+.accessory {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 4px 8px;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  color: var(--ink);
+  font-weight: 500;
+}
+.accessory:hover:not(.acc-locked) {
+  border-color: #9955DD;
+  background: #f9f5ff;
+}
+.accessory.acc-owned {
+  border-color: #BBAAEE;
+  background: #f8f5ff;
+}
+.accessory.acc-equipped {
+  border-color: #8844CC;
+  background: linear-gradient(180deg, #f3ecff 0%, #ede0ff 100%);
+  box-shadow: 0 0 0 2px rgba(136, 68, 204, 0.18);
+}
+.accessory.acc-locked {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.acc-icon  { font-size: 24px; line-height: 1; }
+.acc-name  { font-size: 11px; font-weight: 700; text-align: center; }
+.acc-slot  { font-size: 10px; color: var(--soft); }
+.acc-price { font-size: 10px; color: #c9851f; font-weight: 700; }
+.acc-tag   { font-size: 10px; color: #8844CC; font-weight: 800; }
+.acc-wear  { font-size: 10px; color: var(--soft); }
+
+/* ===== Магазин ящиков ===== */
+.crate-shop {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 0;
+}
+.crate-shop-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 6px 10px;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+  color: var(--ink);
+  transition: border-color 0.15s, background 0.15s;
+}
+.crate-shop-item:hover:not(.crate-locked) {
+  border-color: #c9851f;
+  background: #fffbe8;
+}
+.crate-shop-item.crate-locked { opacity: 0.48; cursor: default; }
+.crate-shop-name  { font-size: 11px; font-weight: 700; }
+.crate-shop-price { font-size: 11px; color: #c9851f; font-weight: 700; }
+.crate-shop-pool  { font-size: 15px; letter-spacing: 2px; }
+
+/* ===== Коллекция персонажей ===== */
+.buddy-collection {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 0;
+}
+.buddy-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px 8px;
+  background: #fff;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--ink);
+  transition: border-color 0.15s, background 0.15s;
+}
+.buddy-card:hover { border-color: #aaa; }
+.buddy-card.buddy-active {
+  border-color: #e53935;
+  background: linear-gradient(180deg, #fff5f5 0%, #fee8e8 100%);
+  box-shadow: 0 0 0 2px rgba(229,57,53,0.15);
+}
+.buddy-preview {
+  width: 46px;
+  height: 46px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.buddy-card-name { font-size: 10px; font-weight: 700; text-align: center; }
+.buddy-card-mult { font-size: 10px; font-weight: 800; }
+.buddy-card-tag  { font-size: 9px; color: #e53935; font-weight: 800; }

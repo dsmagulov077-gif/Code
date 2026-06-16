@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { Auth } from './components/Auth';
-import { Entries } from './components/Entries';
+import { Game } from './components/Game';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -34,8 +34,12 @@ export default function App() {
         )}
       </header>
 
-      {/* Нет сессии → показываем вход. Есть → показываем приложение. */}
-      {!session ? <Auth /> : <Entries userEmail={session.user.email ?? ''} />}
+      {/* Нет сессии → показываем вход. Есть → показываем игру. */}
+      {!session ? (
+        <Auth />
+      ) : (
+        <Game userEmail={session.user.email ?? ''} userId={session.user.id} />
+      )}
     </main>
   );
 }
