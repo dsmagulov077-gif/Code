@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 // Вход и регистрация по email + паролю. Это пример — Codex поможет улучшить (Google-вход и т.д.).
-export function Auth() {
+export function Auth({ onGuest }: { onGuest?: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -58,6 +58,11 @@ export function Auth() {
       >
         {mode === 'signin' ? 'Нет аккаунта? Зарегистрируйся' : 'Уже есть аккаунт? Войти'}
       </button>
+      {onGuest && (
+        <button className="ghost" onClick={onGuest} disabled={busy}>
+          Зайти как гость
+        </button>
+      )}
     </section>
   );
 }
