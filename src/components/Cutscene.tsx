@@ -271,7 +271,7 @@ export function Cutscene({ onDone }: { onDone: () => void }) {
         ref={canvasRef}
         width={CW}
         height={CH}
-        style={{ display: 'block', height: '100%', width: 'auto', maxWidth: '100%', maxHeight: '100%', background: '#000' }}
+        style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
       />
 
       {/* субтитры */}
