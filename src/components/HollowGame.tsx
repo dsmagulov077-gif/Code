@@ -9,16 +9,19 @@ const ARENA_X0 = 8420, ARENA_X1 = 11000;
 const ARENA_FLOOR_Y = 395;   // top of the arena floor — the only surface the boss stands on
 const GRAV = 1480, PSPD = 245, JV = -610, DJV = -530;
 const DSPD = 530, DDUR = 0.14, ADUR = 0.17, ACOOL = 0.34, INV = 0.85;
+const CRIT_MULT = 1.8;   // aimed up/down slashes (W/↑ or S/↓) strike as critical hits
 // dodge roll — a free evasive move (key Q / F) with generous i-frames, separate from the dash
 const DODGE_DUR = 0.30, DODGE_SPD = 360, DODGE_IFRAME = 0.42;
 const REGEN = 1.4;   // free passive HP regen per second (when not being hit)
 const SHIELD_CD = 3; // seconds the shield must recharge after it blocks a hit
 const SPIKE_TOP = 426;   // y of the spike tips at the bottom of every pit — touch = death
+const POGO_VY = 400;     // upward bounce when a down-slash connects with the spikes (Hollow-Knight pogo)
 // boss special attacks
 // longer wind-up + thinner, shorter beam → much easier to step out of the way
 const LASER_CHG = 1.35, LASER_FIRE = 0.5, LASER_LEN = 950, LASER_HW = 9;
 // arm-grab: wind-up telegraph → snap the claw out → if it catches, reel + crush + hurl the player
 const REACH_TEL = 0.32;                          // wind-up: claw rears back, charges, aim guide
+const BOSS_DEATH_DUR = 3.0;                       // length of the defeat sequence before the portal opens
 const REACH_EXT = 0.15, REACH_HOLD = 0.26, REACH_RET = 0.30, REACH_LEN = 180;
 const GRAB_REEL = 0.42, GRAB_CRUSH = 0.34;       // reel the caught player in, hold & crush, then throw
 const GRAB_CRUSH_DMG = 12, GRAB_THROW_DMG = 26;
@@ -77,10 +80,10 @@ interface CP    { x:number; y:number; on:boolean }
 interface Lever   { x:number; y:number; flag:string; on:boolean; cd:number }
 interface Gate    { plat:Plat; baseY:number; flag:string; open:number; opened:boolean }   // open 0..1 — slides up out of the way
 interface Mover   { plat:Plat; x0:number; y0:number; x1:number; y1:number; period:number; phase:number; dx:number; dy:number }
-interface Crystal { x:number; y:number; group:string; lit:boolean }
+interface Crystal { x:number; y:number; baseY:number; group:string; lit:boolean }   // baseY = surface the pedestal stands on
 interface Portal  { x:number; y:number; kind:'next'|'win'; t:number }
 type PS = 'idle'|'run'|'jump'|'fall'|'atk'|'dash'|'dodge'|'wall'|'hurt'|'block'|'dead';
-type EK = 'crawler'|'flyer'|'jumper'|'boss';
+type EK = 'crawler'|'flyer'|'jumper'|'sentinel'|'charger'|'boss';
 
 interface Plr {
   x:number; y:number; vx:number; vy:number; w:number; h:number;
@@ -94,6 +97,7 @@ interface Plr {
   ahit:number[];
   blk:boolean; sh:number;   // shield raised? + shield energy 0..1
   aup:boolean;              // current swing is an up-slash
+  adn:boolean;              // current swing is a down-slash (holding S / ↓)
   grb:boolean;              // held in the boss's grab — controls locked, body driven by the claw
 }
 
@@ -102,16 +106,18 @@ interface Ene {
   w:number; h:number; hp:number; mhp:number; f:1|-1;
   st:string; stT:number; aT:number; af:number; og:boolean; ph:number;
   aim:number;   // boss: locked aim angle for laser / arm-reach
+  dyT?:number;  // boss: death-animation clock (seconds since defeat)
 }
 
 interface Proj { x:number; y:number; vx:number; vy:number; r:number; life:number; foe:boolean }
 interface Part { x:number; y:number; vx:number; vy:number; life:number; ml:number; col:string; sz:number }
+interface FloatTxt { x:number; y:number; vy:number; life:number; ml:number; txt:string; col:string }   // rising hit-marker text
 
 interface Light  { x:number; y:number }
 interface Shaft  { x:number; w:number }
 
 interface GS {
-  plr:Plr; ens:Ene[]; prjs:Proj[]; pts:Part[];
+  plr:Plr; ens:Ene[]; prjs:Proj[]; pts:Part[]; floats:FloatTxt[];
   plats:Plat[]; cps:CP[];
   cx:number; cy:number; t:number; bbar:boolean;
   shake:number; cpIdx:number;
@@ -225,6 +231,7 @@ function mkPlr(x:number,y:number): Plr {
     ahit:[],
     blk:false,sh:1,
     aup:false,
+    adn:false,
     grb:false,
   };
 }
@@ -232,7 +239,10 @@ function mkPlr(x:number,y:number): Plr {
 function mkEne(id:number,k:EK,x:number,y:number): Ene {
   const sz:Record<EK,{w:number;h:number;hp:number}> = {
     crawler:{w:42,h:26,hp:45}, flyer:{w:30,h:24,hp:28},
-    jumper:{w:24,h:40,hp:58}, boss:{w:92,h:112,hp:600},
+    jumper:{w:24,h:40,hp:58},
+    sentinel:{w:30,h:48,hp:52},   // temple turret — stationary ranged guardian
+    charger:{w:56,h:34,hp:82},    // armored brute — winds up then rushes
+    boss:{w:92,h:112,hp:600},
   };
   const s=sz[k];
   return {id,k,x,y:y-s.h,vx:0,vy:0,w:s.w,h:s.h,hp:s.hp,mhp:s.hp,
@@ -244,7 +254,7 @@ function buildLevel1(): GS {
   return {
     plr: mkPlr(80,350),
     ens: ESPAWNS.map((s,i)=>mkEne(i,s.k,s.x,s.y)),
-    prjs:[], pts:[],
+    prjs:[], pts:[], floats:[],
     plats:[...PLATS, ...CEIL],   // fresh copy — the boss gate is pushed in at runtime
     cps: INIT_CPS.map(c=>({...c})),
     cx:0,cy:0,t:0,bbar:false,shake:0,cpIdx:-1,
@@ -256,7 +266,7 @@ function buildLevel1(): GS {
 }
 
 /* ── LEVEL 2 (the deeper cave beyond the portal — long, puzzle-laden) ── */
-const L2_WW = 13600;
+const L2_WW = 19200;
 const GR_Y = 395, GR_H = 130;   // ground top + thickness (matches level 1)
 
 // a portcullis gate: a tall pillar that slides up out of the corridor when its flag is set
@@ -278,95 +288,107 @@ function buildLevel2(): GS {
   const czones:{flag:string;x0:number;x1:number}[]=[];
   const G=(x0:number,x1:number)=>plats.push({x:x0,y:GR_Y,w:x1-x0,h:GR_H});
 
-  // ── solid ground, broken by three spike pits ──
-  G(0,2000);  G(3000,6200);  G(7600,9400);  G(10400,L2_WW);
+  // ── solid ground, broken by three spike pits (rooms lengthened; pits keep their tuned width) ──
+  G(0,4000);  G(5000,10400);  G(11800,14200);  G(15200,L2_WW);
   plats.push({x:-26,y:40,w:26,h:355});           // left wall (you arrive here)
   plats.push({x:L2_WW-14,y:40,w:26,h:355});       // right wall (caps the level)
 
-  // ── ROOM 1 — reach the lever to raise the first gate ──
+  // ── ROOM 1 — reach the lever to raise the first gate (long approach corridor) ──
   plats.push({x:480,y:310,w:120,h:14});
   plats.push({x:760,y:250,w:170,h:14});
   levers.push({x:845,y:250,flag:'l1',on:false,cd:0});
-  addGate(plats,gates,1950,'l1');
+  plats.push({x:1300,y:300,w:150,h:14});
+  plats.push({x:1750,y:250,w:150,h:14});
+  plats.push({x:2250,y:300,w:160,h:14});
+  plats.push({x:2750,y:250,w:150,h:14});
+  plats.push({x:3250,y:300,w:160,h:14});
+  addGate(plats,gates,3950,'l1');
 
-  // ── ROOM 2 — spike pit (2000–3000): ride the elevators, mind their timing ──
-  addMover(plats,movers, 2110,360, 2110,200, 3.4, 0);
-  plats.push({x:2360,y:282,w:120,h:16});
-  addMover(plats,movers, 2620,360, 2620,200, 3.4, 1.7);
-  plats.push({x:2870,y:282,w:120,h:16});
+  // ── ROOM 2 — spike pit (4000–5000): ride the elevators, mind their timing ──
+  addMover(plats,movers, 4110,360, 4110,200, 3.4, 0);
+  plats.push({x:4360,y:282,w:120,h:16});
+  addMover(plats,movers, 4620,360, 4620,200, 3.4, 1.7);
+  plats.push({x:4870,y:282,w:120,h:16});
 
   // ── ROOM 3 — combat: clear the room to open the gate ──
-  czones.push({flag:'g2',x0:3000,x1:4520});
-  addGate(plats,gates,4520,'g2');
+  czones.push({flag:'g2',x0:5000,x1:7600});
+  addGate(plats,gates,7600,'g2');
 
   // ── ROOM 4 — light all three crystals to open the gate ──
-  plats.push({x:5060,y:250,w:140,h:14});
-  crystals.push({x:4760,y:350,group:'cz',lit:false});
-  crystals.push({x:5130,y:226,group:'cz',lit:false});
-  crystals.push({x:5760,y:350,group:'cz',lit:false});
-  addGate(plats,gates,6150,'cz');
+  plats.push({x:8160,y:250,w:160,h:14});
+  crystals.push({x:7860,y:350,baseY:GR_Y,group:'cz',lit:false});
+  crystals.push({x:8230,y:226,baseY:250,group:'cz',lit:false});   // stands on the y=250 ledge
+  crystals.push({x:9600,y:350,baseY:GR_Y,group:'cz',lit:false});
+  addGate(plats,gates,10400,'cz');
 
-  // ── ROOM 5 — spike pit (6200–7600): ride the long platform across ──
-  addMover(plats,movers, 6320,330, 7380,330, 11.0, 0);   // slower so it's rideable over the spikes
-  plats.push({x:6880,y:300,w:90,h:16});           // a small island to breathe
+  // ── ROOM 5 — spike pit (10400–11800): ride the long platform across ──
+  addMover(plats,movers, 10520,330, 11580,330, 11.0, 0);   // slower so it's rideable over the spikes
+  plats.push({x:11080,y:300,w:90,h:16});          // a small island to breathe
 
   // ── ROOM 6 — lever AND two crystals, both needed for the gate ──
-  plats.push({x:7900,y:300,w:120,h:14});
-  plats.push({x:8180,y:240,w:170,h:14});
-  levers.push({x:8265,y:240,flag:'l2',on:false,cd:0});
-  crystals.push({x:8560,y:350,group:'cz2',lit:false});
-  crystals.push({x:8980,y:350,group:'cz2',lit:false});
-  addGate(plats,gates,9350,'g4');                 // g4 = l2 && cz2 (combined in updatePuzzles)
+  plats.push({x:12100,y:300,w:120,h:14});
+  plats.push({x:12380,y:240,w:170,h:14});
+  levers.push({x:12465,y:240,flag:'l2',on:false,cd:0});
+  crystals.push({x:12760,y:350,baseY:GR_Y,group:'cz2',lit:false});
+  crystals.push({x:13180,y:350,baseY:GR_Y,group:'cz2',lit:false});
+  addGate(plats,gates,13750,'g4');                // g4 = l2 && cz2 (combined in updatePuzzles)
 
-  // ── ROOM 7 — spike pit (9400–10400): elevators again ──
-  addMover(plats,movers, 9510,360, 9510,210, 3.0, 0);
-  plats.push({x:9760,y:282,w:120,h:16});
-  addMover(plats,movers, 10010,360, 10010,210, 3.0, 1.5);
-  plats.push({x:10260,y:282,w:120,h:16});
+  // ── ROOM 7 — spike pit (14200–15200): elevators again ──
+  addMover(plats,movers, 14310,360, 14310,210, 3.0, 0);
+  plats.push({x:14560,y:282,w:120,h:16});
+  addMover(plats,movers, 14810,360, 14810,210, 3.0, 1.5);
+  plats.push({x:15060,y:282,w:120,h:16});
 
   // ── ROOM 8 — final guardians: clear the room ──
-  czones.push({flag:'g5',x0:10400,x1:12150});
-  addGate(plats,gates,12150,'g5');
+  czones.push({flag:'g5',x0:15200,x1:17750});
+  addGate(plats,gates,17750,'g5');
 
   // a few aerial ledges for combat footing
-  plats.push({x:3400,y:280,w:130,h:14});
-  plats.push({x:4050,y:300,w:120,h:14});
-  plats.push({x:10800,y:290,w:130,h:14});
-  plats.push({x:11600,y:300,w:120,h:14});
+  plats.push({x:5400,y:280,w:130,h:14});
+  plats.push({x:6100,y:300,w:120,h:14});
+  plats.push({x:6800,y:250,w:130,h:14});
+  plats.push({x:15650,y:290,w:130,h:14});
+  plats.push({x:16500,y:300,w:120,h:14});
 
   const ceil = buildCeiling(L2_WW, []);
 
   const espawns:ES[]=[
-    {k:'crawler',x:1300,y:GR_Y},
-    {k:'jumper', x:3300,y:GR_Y},   // R3 combat zone
-    {k:'crawler',x:3750,y:GR_Y},
-    {k:'jumper', x:4200,y:GR_Y},
-    {k:'flyer',  x:5000,y:250},    // R4 ambience (outside any zone)
-    {k:'flyer',  x:8500,y:240},    // R6 ambience
-    {k:'crawler',x:10750,y:GR_Y},  // R8 combat zone
-    {k:'jumper', x:11200,y:GR_Y},
-    {k:'crawler',x:11700,y:GR_Y},
+    {k:'crawler', x:1800,y:GR_Y},
+    {k:'charger', x:2600,y:GR_Y},   // R1 corridor — first taste of the brute
+    {k:'jumper',  x:5400,y:GR_Y},   // R3 combat zone
+    {k:'sentinel',x:5800,y:GR_Y},   //   turret pins you from range
+    {k:'crawler', x:6100,y:GR_Y},
+    {k:'charger', x:6700,y:GR_Y},   //   brute rushes while you dodge bolts
+    {k:'sentinel',x:8900,y:GR_Y},   // R4 crystal room guardian (ambience)
+    {k:'flyer',   x:8800,y:250},    // R4 ambience (outside any zone)
+    {k:'charger', x:13400,y:GR_Y},  // R6 lever room — roaming brute
+    {k:'flyer',   x:12800,y:240},   // R6 ambience
+    {k:'sentinel',x:15600,y:GR_Y},  // R8 combat zone
+    {k:'crawler', x:16000,y:GR_Y},
+    {k:'jumper',  x:16300,y:GR_Y},
+    {k:'charger', x:16800,y:GR_Y},
+    {k:'crawler', x:17200,y:GR_Y},
   ];
 
   const lanterns:Light[]=[
-    {x:360,y:280},{x:1300,y:240},{x:1950,y:160},{x:3400,y:250},{x:4200,y:200},
-    {x:5060,y:200},{x:6000,y:250},{x:7000,y:240},{x:8180,y:185},{x:8900,y:250},
-    {x:9900,y:240},{x:10800,y:250},{x:11700,y:230},{x:13050,y:240},
+    {x:360,y:280},{x:1800,y:240},{x:3900,y:160},{x:5400,y:250},{x:6800,y:200},
+    {x:8160,y:200},{x:9400,y:250},{x:11000,y:240},{x:12380,y:185},{x:13180,y:250},
+    {x:14800,y:240},{x:15600,y:250},{x:17000,y:230},{x:18600,y:240},
   ];
-  const embernooks:Light[]=[ {x:1500,y:372},{x:3600,y:372},{x:5500,y:378},{x:8000,y:372},{x:11000,y:378} ];
-  const shafts:Shaft[]=[ {x:1000,w:120},{x:4000,w:140},{x:6800,w:130},{x:9000,w:140},{x:11500,w:150},{x:12900,w:140} ];
+  const embernooks:Light[]=[ {x:1800,y:372},{x:5800,y:372},{x:8800,y:378},{x:12500,y:372},{x:16500,y:378} ];
+  const shafts:Shaft[]=[ {x:1500,w:120},{x:6200,w:140},{x:10800,w:130},{x:13500,w:140},{x:16800,w:150},{x:18800,w:140} ];
 
   return {
     plr: mkPlr(80,350),
     ens: espawns.map((s,i)=>mkEne(i,s.k,s.x,s.y)),
-    prjs:[], pts:[],
+    prjs:[], pts:[], floats:[],
     plats:[...plats, ...ceil],
-    cps: [{x:3300,y:375,on:false},{x:7700,y:375,on:false},{x:10500,y:375,on:false}],
+    cps: [{x:5400,y:375,on:false},{x:11900,y:375,on:false},{x:15300,y:375,on:false}],
     cx:0,cy:0,t:0,bbar:false,shake:0,cpIdx:-1,
     level:2, ww:L2_WW,
     lanterns, embernooks, shafts,
     levers, gates, movers, crystals, czones, flags:{},
-    portal:{x:13150,y:300,kind:'win',t:0}, enterPortal:null,
+    portal:{x:18600,y:300,kind:'win',t:0}, enterPortal:null,
   };
 }
 
@@ -382,6 +404,11 @@ function overlap(ax:number,ay:number,aw:number,ah:number,
 function spawnPts(gs:GS,x:number,y:number,n:number,col:string,spd:number=3,sz:number=2.5) {
   for(let i=0;i<n;i++)
     gs.pts.push({x,y,vx:rf(-spd,spd),vy:rf(-spd-1,1),life:.7,ml:.7,col,sz:rf(sz*.6,sz*1.4)});
+}
+
+// a rising, fading hit-marker (e.g. "CRIT!") that pops above the struck target
+function spawnFloat(gs:GS,x:number,y:number,txt:string,col:string) {
+  gs.floats.push({x,y,vy:-46,life:.85,ml:.85,txt,col});
 }
 
 // plant the player firmly on the nearest ground below their feet — no falling
@@ -555,6 +582,107 @@ function drawBG(ctx:CanvasRenderingContext2D,camX:number,t:number,lvl=1) {
     fg.addColorStop(0,'transparent'); fg.addColorStop(.5,i?'#3a2416':'#161622'); fg.addColorStop(1,'transparent');
     ctx.fillStyle=fg; ctx.fillRect(0,fy-32,VW,64); ctx.restore();
   }
+}
+
+/* ══════════ DRAW — BOSS ARENA ATMOSPHERE (level 1) ══════════ */
+// A dramatic void-temple backdrop painted only inside the sealed boss chamber
+// (interior 8474–10964). Carved pilasters, wall braziers and a pulsing hellgate
+// behind the throne set it apart from the open cave the rest of the level uses.
+function drawArena(ctx:CanvasRenderingContext2D,camX:number,camY:number,t:number){
+  const IN0=8474, IN1=10964;          // interior span between the framing walls
+  const TOP=40, FLOOR=395;            // chamber roof underside → floor surface
+  const l=IN0-camX, r=IN1-camX, top=TOP-camY, bot=FLOOR-camY;
+  if(r<0||l>VW||bot<0||top>VH) return;          // chamber fully off-screen
+  const W=r-l, H=bot-top;
+  const pulse=0.5+0.5*Math.sin(t*1.6);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(l,top,W,H); ctx.clip();   // decor never bleeds outside the room
+
+  // 1 — brooding crimson void washing over the plain cave bg
+  const bg=ctx.createLinearGradient(0,top,0,bot);
+  bg.addColorStop(0,'#0a0206'); bg.addColorStop(.55,'#1a0408'); bg.addColorStop(1,'#050103');
+  ctx.fillStyle=bg; ctx.fillRect(l,top,W,H);
+
+  // 2 — pulsing hellgate behind the throne (world centre 9710)
+  const gx=9710-camX, gy=250-camY, gR=150+pulse*22;
+  const gg=ctx.createRadialGradient(gx,gy,8,gx,gy,gR);
+  gg.addColorStop(0,`rgba(255,150,60,${0.30+pulse*0.12})`);
+  gg.addColorStop(.4,`rgba(220,40,10,${0.18+pulse*0.08})`);
+  gg.addColorStop(1,'rgba(120,0,0,0)');
+  ctx.fillStyle=gg; ctx.beginPath(); ctx.arc(gx,gy,gR,0,Math.PI*2); ctx.fill();
+  // slowly counter-rotating rune rings around the gate
+  ctx.save(); ctx.globalAlpha=0.22+pulse*0.15; ctx.strokeStyle='#ff7a33'; ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+    ctx.setLineDash([14,18]); ctx.lineDashOffset=(t*(i%2?-16:16))%32;
+    ctx.beginPath(); ctx.arc(gx,gy,70+i*34+pulse*6,0,Math.PI*2); ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.restore();
+
+  // 3 — carved pilasters marching along the back wall
+  const cols=7, step=(IN1-IN0)/cols;
+  for(let i=1;i<cols;i++){
+    const px=IN0+step*i-camX, pw=26;
+    const pg=ctx.createLinearGradient(px-pw/2,0,px+pw/2,0);
+    pg.addColorStop(0,'#14060a'); pg.addColorStop(.5,'#28101a'); pg.addColorStop(1,'#0c0307');
+    ctx.fillStyle=pg; ctx.fillRect(px-pw/2,top,pw,H);
+    ctx.fillStyle='rgba(255,90,40,0.10)'; ctx.fillRect(px-pw/2,top,2,H);   // faint rim light
+    ctx.fillStyle='#1c0a10'; ctx.fillRect(px-pw/2-4,top,pw+8,12);          // capital
+    ctx.fillRect(px-pw/2-4,bot-12,pw+8,12);                                // base block
+  }
+
+  // 4 — wall braziers (flanking the throne, clear of the combat ledges) with floor glow
+  const braz=[8700,10720];
+  for(let bi=0;bi<braz.length;bi++){
+    const bx=braz[bi]-camX, by=bot-150;
+    const flk=0.7+0.3*Math.sin(t*9+bi*2.1)+0.15*Math.sin(t*23+bi);
+    const fp=ctx.createRadialGradient(bx,bot,4,bx,bot,90);
+    fp.addColorStop(0,`rgba(255,130,40,${0.18*flk})`); fp.addColorStop(1,'rgba(255,80,0,0)');
+    ctx.fillStyle=fp; ctx.beginPath(); ctx.ellipse(bx,bot,90,18,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#0a0508'; ctx.fillRect(bx-9,by,18,8); ctx.fillRect(bx-3,by+8,6,18);   // bowl + stem
+    const ff=ctx.createRadialGradient(bx,by-8,1,bx,by-8,20*flk);
+    ff.addColorStop(0,'rgba(255,235,150,0.95)'); ff.addColorStop(.5,`rgba(255,140,30,${0.8*flk})`); ff.addColorStop(1,'rgba(255,60,0,0)');
+    ctx.fillStyle=ff; ctx.beginPath(); ctx.ellipse(bx,by-8,9*flk,16*flk,0,0,Math.PI*2); ctx.fill();
+  }
+
+  // 5 — ash embers drifting up the chamber
+  ctx.save();
+  for(let i=0;i<26;i++){
+    const seed=i*149+7;
+    const ex=IN0+(seed*53%(IN1-IN0))-camX;
+    const prog=((t*16+seed)%140)/140;
+    const ey=bot-prog*H*0.9+Math.sin(t*0.8+i)*4;
+    ctx.globalAlpha=(1-prog)*0.5;
+    ctx.fillStyle=i%4?'#ff7a33':'#ffce6a';
+    ctx.fillRect(ex,ey,1+(i%2),1+(i%2));
+  }
+  ctx.restore();
+
+  // 6 — molten seams glowing in the floor near the throne
+  ctx.save(); ctx.globalAlpha=0.3+pulse*0.2;
+  ctx.strokeStyle='#ff5a1e'; ctx.lineWidth=2; ctx.lineCap='round';
+  for(const [a,b] of [[9500,9650],[9760,9920]] as [number,number][]){
+    const x0=a-camX, x1=b-camX;
+    ctx.beginPath(); ctx.moveTo(x0,bot); ctx.lineTo((x0+x1)/2+Math.sin(a)*6,bot-10); ctx.lineTo(x1,bot); ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.restore();   // un-clip
+}
+
+/* ══════════ DRAW — BEDROCK ══════════ */
+// Solid deep rock filling the whole bottom of the screen, below the floor surface.
+// Drawn before the spikes and platforms (which paint over it), so there is never
+// any black void visible beneath the ground or down inside the pits.
+function drawBedrock(ctx:CanvasRenderingContext2D,camY:number,lvl=1) {
+  const BR_TOP=415;                 // just below the floor surface (395), above the spike tips (426)
+  const sy=BR_TOP-camY;
+  if(sy>=VH) return;                // floor line already below the screen — nothing to fill
+  const top=Math.max(0,sy);
+  const g=ctx.createLinearGradient(0,top,0,VH);
+  if(lvl===2){ g.addColorStop(0,C.tStoneSh); g.addColorStop(1,'#140d05'); }   // dark sandstone
+  else       { g.addColorStop(0,C.rockWarm); g.addColorStop(1,'#070509'); }   // warm dark cave rock
+  ctx.fillStyle=g; ctx.fillRect(0,top,VW,VH-top);
 }
 
 /* ══════════ DRAW — SPIKES ══════════ */
@@ -1007,7 +1135,28 @@ function drawPlayer(ctx:CanvasRenderingContext2D,p:Plr,camX:number,camY:number,t
     ctx.save();
     ctx.shadowColor=C.swordGl; ctx.shadowBlur=12;
 
-    if(p.aup){
+    if(p.adn){
+      // ── DOWN-SLASH ── blade points down, arc sweeps below the feet
+      ctx.strokeStyle=`rgba(180,204,255,${0.65*(1-prog)+0.22})`;
+      ctx.lineWidth=4; ctx.lineCap='round';
+      ctx.beginPath(); ctx.arc(0,p.h*.5-2, 30+prog*6, Math.PI*0.08, Math.PI*0.92); ctx.stroke();
+
+      const by=p.h*.5+1, len=46+prog*10;    // base near the feet, tip below
+      ctx.fillStyle=C.sword;
+      ctx.beginPath();
+      ctx.moveTo(-3, by);
+      ctx.lineTo(-3, by+len-9);
+      ctx.lineTo( 0, by+len);               // tip
+      ctx.lineTo( 3, by+len-9);
+      ctx.lineTo( 3, by);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,.6)';
+      ctx.fillRect(-0.7, by, 1.4, len-11);  // fuller
+      ctx.shadowBlur=0;
+      ctx.fillStyle='#9a8444'; ctx.fillRect(-8, by-3, 16, 5);   // crossguard
+      ctx.fillStyle=C.swordGl;
+      ctx.beginPath(); ctx.arc(0, by-5, 2.4, 0, Math.PI*2); ctx.fill(); // pommel
+    } else if(p.aup){
       // ── UP-SLASH ── blade points up, arc sweeps overhead
       ctx.strokeStyle=`rgba(180,204,255,${0.65*(1-prog)+0.22})`;
       ctx.lineWidth=4; ctx.lineCap='round';
@@ -1223,6 +1372,80 @@ function drawJumper(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number) 
   ctx.restore();
 }
 
+/* ══════════ DRAW — SENTINEL (temple turret guardian) ══════════ */
+function drawSentinel(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number) {
+  const sx=e.x-camX,sy=e.y-camY;
+  const aiming=e.st==='aim';
+  const charge=aiming?Math.min(1,e.stT/0.75):0;
+  ctx.save(); ctx.translate(sx+e.w/2,sy+e.h/2);
+  if(e.f===-1) ctx.scale(-1,1);
+  // carved sandstone idol — tapered pillar body with a gold-trimmed shoulder
+  const g=ctx.createLinearGradient(-e.w/2,0,e.w/2,0);
+  g.addColorStop(0,C.tStoneSh); g.addColorStop(.5,C.tStone); g.addColorStop(1,C.tStoneSh);
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.moveTo(-e.w/2+3,e.h/2); ctx.lineTo(-e.w/2+6,-e.h/2+8);
+  ctx.lineTo(e.w/2-6,-e.h/2+8); ctx.lineTo(e.w/2-3,e.h/2); ctx.closePath(); ctx.fill();
+  // gold collar + crown ridge
+  ctx.fillStyle=C.tGold; ctx.fillRect(-e.w/2+5,-e.h/2+8,e.w-10,3);
+  ctx.fillStyle=C.tGoldD; ctx.fillRect(-e.w/2+7,-e.h/2+2,e.w-14,6);
+  // glyph seam down the chest
+  ctx.fillStyle=C.tGlyph; ctx.fillRect(-1,-e.h/2+14,2,e.h-20);
+  // the charged core eye — brightens and grows as it winds up to fire
+  const er=4+charge*4;
+  ctx.save();
+  ctx.shadowColor=C.ember; ctx.shadowBlur=8+charge*16;
+  ctx.fillStyle=aiming?`rgb(255,${Math.round(120-charge*80)},40)`:C.glowWarm;
+  ctx.beginPath(); ctx.arc(0,-e.h*0.18,er,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  // muzzle glint pointing at the target while aiming
+  if(aiming){
+    ctx.save(); ctx.globalAlpha=.5+charge*.5; ctx.strokeStyle=C.lanternG; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(er+2,-e.h*0.18); ctx.lineTo(er+10+charge*10,-e.h*0.18); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/* ══════════ DRAW — CHARGER (armored temple brute) ══════════ */
+function drawCharger(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number,t:number) {
+  const sx=e.x-camX,sy=e.y-camY;
+  const wind=e.st==='wind', charging=e.st==='charge';
+  const lower=wind?Math.min(1,e.stT/0.5):charging?1:0;   // horns dip as it commits
+  ctx.save(); ctx.translate(sx+e.w/2,sy+e.h/2);
+  if(e.f===-1) ctx.scale(-1,1);
+  // stocky legs (churn while charging)
+  const churn=charging?Math.sin(t*22)*4:0;
+  ctx.fillStyle='#1a1410';
+  ctx.fillRect(-e.w/2+6,e.h/2-8,7,8+churn); ctx.fillRect(e.w/2-13,e.h/2-8,7,8-churn);
+  ctx.fillRect(-6,e.h/2-8,7,8-churn);
+  // armored plated body
+  const g=ctx.createLinearGradient(0,-e.h/2,0,e.h/2);
+  g.addColorStop(0,'#4a3520'); g.addColorStop(.5,'#33260f'); g.addColorStop(1,'#1c1409');
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.ellipse(0,0,e.w/2,e.h/2,0,0,Math.PI*2); ctx.fill();
+  // bronze plate banding over the back
+  ctx.fillStyle=C.tGoldD;
+  for(let i=-1;i<=1;i++) ctx.fillRect(i*12-2,-e.h/2+3,4,e.h-10);
+  ctx.fillStyle=C.tStoneSh; ctx.fillRect(-e.w/2+4,-2,e.w-8,2);
+  // lowered horned head leading the charge
+  ctx.save(); ctx.translate(e.w/2-6,-2); ctx.rotate(lower*0.5);
+  ctx.fillStyle='#2a2018';
+  ctx.beginPath(); ctx.ellipse(6,0,11,9,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=C.tStoneL; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(6,-6); ctx.quadraticCurveTo(20,-10,22,-2); ctx.stroke();   // horn
+  ctx.beginPath(); ctx.moveTo(6,4); ctx.quadraticCurveTo(18,2,21,8); ctx.stroke();
+  // glowing eyes — flare red when winding up / charging
+  ctx.save(); ctx.shadowColor=C.egl; ctx.shadowBlur=wind||charging?12:5; ctx.fillStyle=C.egl;
+  ctx.beginPath(); ctx.arc(8,-2,wind||charging?3.2:2.4,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+  // dust puff kicked up mid-charge
+  if(charging){ ctx.save(); ctx.globalAlpha=.3; ctx.fillStyle=C.tDust;
+    ctx.beginPath(); ctx.arc(-e.w/2-2,e.h/2-3,3+Math.sin(t*20)*1.5,0,Math.PI*2); ctx.fill(); ctx.restore(); }
+  ctx.restore();
+}
+
 /* ── BOSS GRAB ARM ──
    draws the sinewy arm + clawed hand at distance L along `aim`.
    open: 1 = fingers splayed (reaching), 0 = clenched fist (holding the player).
@@ -1273,6 +1496,16 @@ function drawBoss(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number,t:n
   const bounce  = walking ? Math.abs(Math.sin(t*stride))*-3 : 0;  // body lifts on each step
   const bobY    = Math.sin(t*1.8)*2 + bounce;                     // gentle bob + walk bounce
   ctx.translate(sx+e.w/2, sy+e.h/2 + bobY);                       // (no flip!)
+
+  // ── DEFEAT: slump, shudder, melt into the floor and fade out ──
+  const dying = e.st==='dead';
+  const dp = dying ? Math.min((e.dyT??0)/BOSS_DEATH_DUR,1) : 0;
+  if(dying){
+    const tremble=1-dp;
+    ctx.translate(Math.sin(t*30)*4*tremble, dp*dp*40);           // shake hard, then sink
+    ctx.rotate(dp*0.5 + Math.sin(t*22)*0.04*tremble);            // keels over to one side
+    ctx.globalAlpha = dp<0.85 ? 1 : Math.max(0,1-(dp-0.85)/0.15); // dissolve at the very end
+  }
 
   // ── ground shadow (pinned to the floor, so the body reads as standing not floating) ──
   const groundY = e.h/2 - bobY;            // counter the bob → shadow stays on the ground
@@ -1579,6 +1812,29 @@ function drawBoss(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number,t:n
     ctx.restore();
   }
 
+  // ── DEFEAT climax: white-hot core flare + expanding soul shockwave ──
+  if(dying){
+    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.rotate(-dp*0.5);  // undo body tilt for the blast
+    const flare=Math.max(0,1-Math.abs(dp-0.78)/0.22);       // peaks at the detonation beat
+    if(flare>0){
+      const fr=40+flare*260;
+      const fg=ctx.createRadialGradient(0,0,2,0,0,fr);
+      fg.addColorStop(0,`rgba(255,250,235,${0.9*flare})`);
+      fg.addColorStop(.4,`rgba(255,170,60,${0.6*flare})`);
+      fg.addColorStop(1,'rgba(255,60,0,0)');
+      ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(0,0,fr,0,Math.PI*2); ctx.fill();
+    }
+    if(dp>0.78){                                            // ring races outward after the blast
+      const rp=(dp-0.78)/0.22, rr=rp*340;
+      ctx.globalAlpha=Math.max(0,1-rp);
+      ctx.strokeStyle='#ffe7b0'; ctx.lineWidth=6*(1-rp)+1;
+      ctx.beginPath(); ctx.arc(0,0,rr,0,Math.PI*2); ctx.stroke();
+      ctx.strokeStyle=C.soulG; ctx.lineWidth=3*(1-rp)+1;
+      ctx.beginPath(); ctx.arc(0,0,rr*0.72,0,Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   ctx.restore();
 }
 
@@ -1702,6 +1958,18 @@ function groundAhead(e:Ene, dir:1|-1, plats:Plat[]): boolean {
   return false;                                // nothing under the next step → a spike pit
 }
 
+// Is the player hanging over an actual spike pit (vs. solid ground)? True when no floor
+// platform sits between their feet and the spike tips — used to gate the spike-pogo so a
+// down-slash on normal ground never launches you.
+function overSpikePit(x:number, w:number, feetY:number, plats:Plat[]): boolean {
+  const cx=x+w/2;
+  for(const pl of plats){
+    if(isCeil(pl)) continue;
+    if(cx>=pl.x && cx<=pl.x+pl.w && pl.y>=feetY-6 && pl.y<SPIKE_TOP) return false; // floor here → not a pit
+  }
+  return true;
+}
+
 /* ══════════ UPDATE — PLAYER ══════════ */
 function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
   const p=gs.plr;
@@ -1728,6 +1996,7 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
 
   const L=keys['a']||keys['ArrowLeft'], R=keys['d']||keys['ArrowRight'];
   const jumpKey=keys[' ']||keys['w']||keys['ArrowUp'];
+  const downKey=keys['s']||keys['ArrowDown'];   // crouch-aim: turns an attack into a down-slash
   const dashKey=keys['Shift']||keys['e']||keys['k'];
   const dodgeKey=keys['q']||keys['f'];   // dedicated dodge roll
   const atkKey=keys['attack'];   // left mouse button (see the mouse listener in the component)
@@ -1802,29 +2071,40 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
     if(p.st==='hurt' && p.it<INV*.6) p.st='idle';
   }
 
-  // begin attack swing — holding up (W / ↑ / Space) turns it into an up-slash
+  // begin attack swing — holding down (S / ↓) → down-slash; else holding up (W / ↑ / Space) → up-slash
   if(atkKey && p.ac<=0 && p.st!=='atk' && !p.da && !p.dod){
-    p.st='atk'; p.at=ADUR; p.ac=ACOOL; p.ahit=[]; p.aup=jumpKey; sfx.play('attack');
+    p.st='atk'; p.at=ADUR; p.ac=ACOOL; p.ahit=[];
+    p.adn=downKey; p.aup=jumpKey&&!downKey;   // down takes priority if both are held
+    sfx.play('attack');
   }
 
   // active attack hitbox — stays live for the whole swing, each enemy hit once
   if(p.st==='atk'){
     const reach=56;
-    // up-slash hits above the knight; otherwise the usual forward arc
-    const hbX=p.aup ? p.x-12              : (p.f===1?p.x+p.w-4:p.x-reach+4);
-    const hbY=p.aup ? p.y-reach           : p.y-4;
-    const hbW=p.aup ? p.w+24              : reach;
-    const hbH=p.aup ? reach+8             : p.h+8;
+    // down-slash hits below, up-slash hits above, otherwise the usual forward arc
+    let hbX:number,hbY:number,hbW:number,hbH:number;
+    if(p.adn)      { hbX=p.x-12; hbY=p.y+p.h-4;   hbW=p.w+24; hbH=reach+8; }
+    else if(p.aup) { hbX=p.x-12; hbY=p.y-reach;   hbW=p.w+24; hbH=reach+8; }
+    else           { hbX=(p.f===1?p.x+p.w-4:p.x-reach+4); hbY=p.y-4; hbW=reach; hbH=p.h+8; }
     for(const e of gs.ens){
       if(e.hp<=0 || p.ahit.includes(e.id)) continue;
       if(overlap(hbX,hbY,hbW,hbH,e.x,e.y,e.w,e.h)){
         p.ahit.push(e.id);
-        e.hp-=p.dmg;
-        spawnPts(gs,e.x+e.w/2,e.y+e.h/2,10,C.part1,3.5);
+        // aimed up/down slashes are critical hits — extra damage and a brighter strike
+        const crit=p.aup||p.adn;
+        e.hp-=crit?Math.round(p.dmg*CRIT_MULT):p.dmg;
+        if(crit){
+          spawnPts(gs,e.x+e.w/2,e.y+e.h/2,18,C.prjG,5,3.2);   // gold crit sparks
+          spawnFloat(gs,e.x+e.w/2,e.y-6,'CRIT!',C.prjG);       // floating crit marker
+          gs.shake=Math.max(gs.shake,.22);
+          sfx.play('block');                                   // sharp metallic crit ring
+        } else {
+          spawnPts(gs,e.x+e.w/2,e.y+e.h/2,10,C.part1,3.5);
+        }
         sfx.play(e.k==='boss'?'bosshit':'hit');
         if(e.hp<=0){
           spawnPts(gs,e.x+e.w/2,e.y+e.h/2,18,e.k==='boss'?C.bssGl:C.soul,4,3.5);
-          p.souls+=e.k==='boss'?120:e.k==='jumper'?14:10;
+          p.souls+=e.k==='boss'?120:e.k==='charger'?20:e.k==='sentinel'?16:e.k==='jumper'?14:10;
           sfx.play('enemydeath');
         }
       }
@@ -1845,6 +2125,20 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
         }
       }
     }
+
+  }
+
+  // ── spike pogo ── as long as you HOLD down (S/↓) + attack (left click) while falling over a
+  // pit, you keep bouncing off the spikes. Kept OUT of the swing/cooldown timing on purpose:
+  // the auto-repeat swing has dead frames, and tying the bounce to them made you stop mid-air
+  // even with the keys still held. The death check below runs after movement, so the bounce
+  // has already lifted you clear of the tips.
+  if(downKey && atkKey && p.vy>0 && p.y+p.h>SPIKE_TOP-60 && overSpikePit(p.x,p.w,p.y+p.h,gs.plats)){
+    p.vy=-POGO_VY;
+    p.jl=p.mj; p.cd=false;          // refresh air-jumps, like a clean landing
+    spawnPts(gs,p.x+p.w/2,SPIKE_TOP,14,C.spikeT,4,3);
+    gs.shake=Math.max(gs.shake,.18);
+    sfx.play('block');              // sharp metallic clang off the spikes
   }
 
   // move
@@ -1976,8 +2270,83 @@ function updateEnemies(gs:GS, dt:number) {
       if(overlap(e.x,e.y,e.w,e.h,p.x,p.y,p.w,p.h)){ sfx.play('bite'); applyDmgToPlr(gs,16,e.x+e.w/2); }
       moveX(e,gs.plats,dt); moveY(e,gs.plats,dt);
 
+    } else if(e.k==='sentinel'){
+      // a rooted temple guardian: sits still, tracks the player, telegraphs, then
+      // flooses a tight fan of bolts. Vulnerable up close (it can't move away).
+      e.vy+=GRAV*dt; if(e.vy>800) e.vy=800;
+      e.vx=0;
+      e.f=(dx>0?1:-1) as 1|-1;
+      if(e.st==='patrol'){
+        if(dist<470 && Math.abs(dy)<240){ e.st='aim'; e.stT=0; sfx.play('lasercharge'); }
+      } else if(e.st==='aim'){
+        e.aim=Math.atan2(dy,dx);                       // track during the wind-up
+        if(e.stT>0.75){
+          const base=Math.atan2((p.y+p.h/2)-(e.y+e.h/2),(p.x+p.w/2)-(e.x+e.w/2));
+          for(let i=0;i<3;i++){ const a=base+(i-1)*0.22;
+            gs.prjs.push({x:e.x+e.w/2,y:e.y+e.h*0.34,vx:Math.cos(a)*330,vy:Math.sin(a)*330,r:7,life:2.6,foe:true}); }
+          sfx.play('projectile');
+          e.st='cool'; e.stT=0;
+        }
+      } else if(e.st==='cool'){
+        if(e.stT>1.3) e.st='patrol';
+        if(dist>600) e.st='patrol';
+      }
+      if(overlap(e.x,e.y,e.w,e.h,p.x,p.y,p.w,p.h)){ sfx.play('peck'); applyDmgToPlr(gs,12,e.x+e.w/2); }
+      moveY(e,gs.plats,dt);
+
+    } else if(e.k==='charger'){
+      // an armored brute: paces, then lowers its horns and rushes the player at speed,
+      // overshooting before it can recover. Stops dead at pits and walls.
+      e.vy+=GRAV*dt; if(e.vy>820) e.vy=820;
+      if(e.st==='patrol'){
+        e.vx=e.f*60;
+        if(e.og && !groundAhead(e, e.f, gs.plats)){ e.f=(e.f*-1) as 1|-1; e.vx=e.f*60; }
+        if(dist<380 && Math.abs(dy)<76 && e.og){ e.st='wind'; e.stT=0; e.vx=0; sfx.play('growl'); }
+      } else if(e.st==='wind'){
+        e.vx=0;
+        if(e.stT>0.5){ e.f=(dx>0?1:-1) as 1|-1; e.st='charge'; e.stT=0; sfx.play('bosslaunch'); }
+      } else if(e.st==='charge'){
+        e.vx=e.f*360;
+        // bail out of the rush at a brink or once it has run its course (a wall just stalls it)
+        const brink = e.og && !groundAhead(e, e.f, gs.plats);
+        if(brink || e.stT>1.1){ e.st='recover'; e.stT=0; e.vx=0; if(brink) gs.shake=Math.max(gs.shake,.1); }
+      } else if(e.st==='recover'){
+        e.vx*=.82;
+        if(e.stT>0.8) e.st='patrol';
+      }
+      const charging = e.st==='charge';
+      if(overlap(e.x,e.y,e.w,e.h,p.x,p.y,p.w,p.h)){ sfx.play('slam'); applyDmgToPlr(gs, charging?22:14, e.x+e.w/2); }
+      moveX(e,gs.plats,dt); moveY(e,gs.plats,dt);
+
     } else if(e.k==='boss'){
-      if(e.hp<=0){ spawnPts(gs,e.x+e.w/2,e.y+e.h/2,40,C.bssGl,6,5); continue; }
+      if(e.hp<=0){
+        // ── DEFEAT SEQUENCE — staggers, erupts, then a climactic burst before fading ──
+        const first = e.dyT===undefined;
+        if(first){ e.dyT=0; e.st='dead'; e.stT=0; e.vx=0; sfx.play('bossroar'); gs.shake=Math.max(gs.shake,.4); }
+        const prev=e.dyT!; e.dyT=prev+dt;
+        const dp=Math.min(e.dyT/BOSS_DEATH_DUR,1);
+        // keep the corpse planted on the arena floor
+        e.vy+=GRAV*dt; if(e.vy>900) e.vy=900; moveY(e,gs.plats,dt);
+        const cx2=e.x+e.w/2, cy2=e.y+e.h/2;
+        if(e.dyT<BOSS_DEATH_DUR){            // only emit while the sequence is still playing
+          // continuous, intensifying eruption of embers + soul wisps from the body
+          const ecol=Math.floor(e.dyT*10)%2?C.bssGl:'#ffcc55';
+          spawnPts(gs,cx2+rf(-e.w/3,e.w/3),cy2+rf(-e.h/3,e.h/3),2+Math.floor(dp*4),ecol,3+dp*4,3+dp*2);
+          // periodic rupture bursts with a little shake as it comes apart
+          if(Math.floor(prev*4)!==Math.floor(e.dyT*4)){
+            spawnPts(gs,cx2+rf(-e.w/2,e.w/2),cy2+rf(-e.h/2,e.h/2),10,C.bssGl,6,4);
+            gs.shake=Math.max(gs.shake,.18+dp*0.2);
+          }
+        }
+        // the climax — one giant white-hot soul detonation, fired once
+        if(prev<BOSS_DEATH_DUR*0.78 && e.dyT>=BOSS_DEATH_DUR*0.78){
+          spawnPts(gs,cx2,cy2,64,'#fff1c8',9,5);
+          spawnPts(gs,cx2,cy2,48,C.bssGl,11,5);
+          spawnPts(gs,cx2,cy2,40,C.soul,7,4);
+          gs.shake=Math.max(gs.shake,.9); sfx.play('win');
+        }
+        continue;
+      }
       const wasPh=e.ph;
       e.ph = e.hp < e.mhp*.5 ? 1 : 0;
       if(e.ph && !wasPh) sfx.play('bossroar');   // enrage into phase 2
@@ -2125,6 +2494,9 @@ function updateProjs(gs:GS, dt:number){
     pt.x+=pt.vx*dt; pt.y+=pt.vy*dt;
     pt.vy+=300*dt; pt.life-=dt; return pt.life>0;
   });
+  gs.floats=gs.floats.filter(ft=>{
+    ft.y+=ft.vy*dt; ft.vy*=0.9; ft.life-=dt; return ft.life>0;   // rise, ease, fade
+  });
 }
 
 /* ══════════ UPDATE — PUZZLES (level 2) ══════════ */
@@ -2226,6 +2598,27 @@ function drawCrystals(ctx:CanvasRenderingContext2D, crystals:Crystal[], camX:num
     const sx=cr.x-camX, sy=cr.y-camY;
     if(sx<-40||sx>VW+40) continue;
     const pulse=0.6+Math.sin(t*3+cr.x)*0.25;
+
+    // ── carved temple pedestal: a stepped sandstone plinth from the crystal down to the floor ──
+    const pTop=sy+8, pBot=cr.baseY-camY;          // column spans under the crystal to its surface
+    if(pBot>pTop){
+      // contact shadow pooled on the floor
+      ctx.save(); ctx.globalAlpha=.4; ctx.fillStyle='#000';
+      ctx.beginPath(); ctx.ellipse(sx,pBot,18,4,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+      // shaft
+      const g=ctx.createLinearGradient(sx-9,0,sx+9,0);
+      g.addColorStop(0,C.tStoneSh); g.addColorStop(.5,C.tStone); g.addColorStop(1,C.tStoneSh);
+      ctx.fillStyle=g; ctx.fillRect(sx-8,pTop,16,pBot-pTop);
+      // base slab (wider footing on the ground)
+      ctx.fillStyle=C.tStoneL; ctx.fillRect(sx-13,pBot-6,26,6);
+      ctx.fillStyle=C.tStoneSh; ctx.fillRect(sx-13,pBot-2,26,2);
+      // capital + gold trim where the crystal rests
+      ctx.fillStyle=C.tStoneL; ctx.fillRect(sx-11,pTop,22,4);
+      ctx.fillStyle=C.tGold;   ctx.fillRect(sx-11,pTop,22,2);
+      // faint glyph notch on the shaft face
+      ctx.fillStyle=C.tGlyph;  ctx.fillRect(sx-2,pTop+10,4,Math.max(0,pBot-pTop-16));
+    }
+
     if(cr.lit){
       ctx.save(); ctx.globalAlpha=0.5*pulse;
       const g=ctx.createRadialGradient(sx,sy,1,sx,sy,30);
@@ -2276,12 +2669,32 @@ function drawPortal(ctx:CanvasRenderingContext2D, portal:Portal, camX:number, ca
 }
 
 /* ══════════ FULL RENDER ══════════ */
+/* ══════════ DRAW — FLOATING HIT MARKERS ══════════ */
+function drawFloats(ctx:CanvasRenderingContext2D, floats:FloatTxt[], camX:number, camY:number){
+  for(const ft of floats){
+    const sx=ft.x-camX, sy=ft.y-camY;
+    if(sx<-40||sx>VW+40) continue;
+    const k=ft.life/ft.ml;                 // 1 → 0
+    const pop=1.35-0.35*k;                 // small grow as it rises
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,k*1.6);     // hold, then fade near the end
+    ctx.translate(sx,sy); ctx.scale(pop,pop);
+    ctx.font='900 13px monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.lineWidth=3; ctx.strokeStyle='rgba(0,0,0,0.7)'; ctx.strokeText(ft.txt,0,0);
+    ctx.shadowColor=ft.col; ctx.shadowBlur=8; ctx.fillStyle=ft.col; ctx.fillText(ft.txt,0,0);
+    ctx.restore();
+  }
+}
+
 function render(canvas:HTMLCanvasElement, gs:GS){
   const ctx=canvas.getContext('2d')!;
   ctx.imageSmoothingEnabled=false;
   const {cx,cy,t}=gs;
 
   drawBG(ctx,cx,t,gs.level);
+  if(gs.level===1) drawArena(ctx,cx,cy,t);   // dramatic backdrop inside the boss chamber
+  drawBedrock(ctx,cy,gs.level);               // solid rock below the floor — no void beneath ground/pits
   drawSpikes(ctx,cx,cy);
   drawPlats(ctx,gs.plats,cx,cy,t,gs.level);
   drawCeiling(ctx,gs.plats,cx,cy,t,gs.level);
@@ -2318,6 +2731,8 @@ function render(canvas:HTMLCanvasElement, gs:GS){
     if(e.k==='crawler')   drawCrawler(ctx,e,cx,cy,t);
     else if(e.k==='flyer') drawFlyer(ctx,e,cx,cy,t);
     else if(e.k==='jumper') drawJumper(ctx,e,cx,cy);
+    else if(e.k==='sentinel') drawSentinel(ctx,e,cx,cy);
+    else if(e.k==='charger') drawCharger(ctx,e,cx,cy,t);
     else if(e.k==='boss')  drawBoss(ctx,e,cx,cy,t);
   }
 
@@ -2326,6 +2741,9 @@ function render(canvas:HTMLCanvasElement, gs:GS){
 
   // player
   drawPlayer(ctx,gs.plr,cx,cy,t);
+
+  // floating hit markers (CRIT!) above the fray
+  drawFloats(ctx,gs.floats,cx,cy);
 
   // soft cave vignette frames everything (screen-space), then HUD on top
   drawVignette(ctx);
@@ -2389,9 +2807,10 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
       // boss slain (level 1) → open the portal to the deeper cave instead of ending
       if(gs.level===1){
         const boss=gs.ens.find(e=>e.k==='boss');
-        if(boss && boss.hp<=0 && !gs.portal){
+        // wait out the full defeat animation before the portal rises
+        if(boss && boss.hp<=0 && (boss.dyT??0)>=BOSS_DEATH_DUR && !gs.portal){
           gs.portal={x:10550,y:300,kind:'next',t:0};
-          gs.shake=Math.max(gs.shake,.3); sfx.play('win');
+          gs.shake=Math.max(gs.shake,.3);
         }
       }
 
@@ -2427,7 +2846,8 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     let combo='';   // secret cheat: type "skip" to skip the current stage
     const down=(e:KeyboardEvent)=>{
       const k=norm(e); if(k===null) return;
-      sfx.init(); sfx.resume(); activeRef.current=true; keysRef.current[k]=true; e.preventDefault();
+      sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
+      activeRef.current=true; keysRef.current[k]=true; e.preventDefault();
       if(k.length===1){
         combo=(combo+k).slice(-4);
         if(combo==='skip'){ combo=''; skipStage(); }
@@ -2439,13 +2859,17 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     return ()=>{ window.removeEventListener('keydown',down); window.removeEventListener('keyup',up); };
   },[]);
 
+  // silence the ambient bed when the game unmounts (e.g. back to the main menu)
+  useEffect(()=>()=>sfx.stopAmbience(),[]);
+
   // Mouse — LEFT CLICK attacks, RIGHT CLICK raises the shield (hold either). Unlocks audio too.
   useEffect(()=>{
     const canvas=canvasRef.current;
     const down=(e:MouseEvent)=>{
       activeRef.current=true;
-      if(e.button===0){ sfx.init(); sfx.resume(); keysRef.current['attack']=true; e.preventDefault(); }
-      else if(e.button===2){ sfx.init(); sfx.resume(); keysRef.current['block']=true; e.preventDefault(); }
+      sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
+      if(e.button===0){ keysRef.current['attack']=true; e.preventDefault(); }
+      else if(e.button===2){ keysRef.current['block']=true; e.preventDefault(); }
     };
     const up=(e:MouseEvent)=>{
       if(e.button===0) keysRef.current['attack']=false;
@@ -2467,6 +2891,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     keysRef.current={};
     pausedRef.current=false;
     activeRef.current=false;   // freeze enemies again until the player makes the first move
+    sfx.startAmbience(1);      // back to the level-1 ambient track
     setPhase('play');
   }
 
@@ -2482,6 +2907,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     keysRef.current={};
     pausedRef.current=false;
     activeRef.current=false;
+    sfx.startAmbience(2);   // switch to the deeper-cave ambient track
     setPhase('play');
   }
 
@@ -2532,7 +2958,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
       <div ref={wrapRef} style={{position:'relative',lineHeight:0,flex:'1 1 auto',minHeight:0,
         display:'flex',alignItems:'center',justifyContent:'center',background:'#000'}}>
         <canvas ref={canvasRef} width={VW} height={VH}
-          style={{display:'block',height:'100%',width:'auto',maxWidth:'100%',maxHeight:'100%',
+          style={{display:'block',width:'100%',height:'100%',objectFit:'cover',
             borderRadius:0,border:'none'}}/>
 
         {/* DEATH */}

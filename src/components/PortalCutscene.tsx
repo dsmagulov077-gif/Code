@@ -195,7 +195,7 @@ export function PortalCutscene({ onDone }: { onDone: () => void }) {
         ref={canvasRef}
         width={CW}
         height={CH}
-        style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+        style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
       />
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: '7%', display: 'flex', justifyContent: 'center', pointerEvents: 'none', padding: '0 24px' }}>
         <p

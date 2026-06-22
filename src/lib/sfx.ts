@@ -29,6 +29,81 @@ class Sfx {
 
   private now() { return this.ctx ? this.ctx.currentTime : 0; }
 
+  // ── AMBIENT MUSIC BED ──────────────────────────────────────────────────────
+  // A continuous, evolving drone (root chord + slow filter sweep + wind layer)
+  // with the occasional soft bell motif. Routed through the master gain, so the
+  // mute button (setEnabled) silences it along with the SFX.
+  private amb: { level: number; bus: GainNode; srcs: AudioScheduledSourceNode[]; timer: number } | null = null;
+
+  startAmbience(level = 1) {
+    this.init();
+    if (!this.ctx || !this.master) return;
+    if (this.amb) { if (this.amb.level === level) return; this.stopAmbience(); }
+    const ctx = this.ctx, t = ctx.currentTime;
+
+    const bus = ctx.createGain();
+    bus.gain.setValueAtTime(0.0001, t);
+    bus.gain.linearRampToValueAtTime(level === 2 ? 0.55 : 0.65, t + 4);   // slow swell-in
+    bus.connect(this.master);
+
+    const srcs: AudioScheduledSourceNode[] = [];
+
+    // shared lowpass with a very slow LFO sweep → the bed "breathes"
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 560; lp.Q.value = 0.7; lp.connect(bus);
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.05;
+    const lfoG = ctx.createGain(); lfoG.gain.value = 260;
+    lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t); srcs.push(lfo);
+
+    // drone chord — a low minor-ish triad (level 2 sits a touch higher/brighter)
+    const roots = level === 2 ? [146.83, 220, 293.66] : [110, 164.81, 220];
+    roots.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = i === 0 ? 'triangle' : 'sine';
+      o.frequency.value = f; o.detune.value = (i - 1) * 6;   // slight detune spread → chorus shimmer
+      const g = ctx.createGain(); g.gain.value = i === 0 ? 0.5 : 0.3;
+      o.connect(g); g.connect(lp); o.start(t); srcs.push(o);
+    });
+
+    // distant wind — looping filtered noise with its own slow sweep
+    const wbuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const wd = wbuf.getChannelData(0);
+    for (let i = 0; i < wd.length; i++) wd[i] = Math.random() * 2 - 1;
+    const wsrc = ctx.createBufferSource(); wsrc.buffer = wbuf; wsrc.loop = true;
+    const wf = ctx.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 320; wf.Q.value = 0.5;
+    const wg = ctx.createGain(); wg.gain.value = 0.07;
+    wsrc.connect(wf); wf.connect(wg); wg.connect(bus); wsrc.start(t); srcs.push(wsrc);
+    const wlfo = ctx.createOscillator(); wlfo.frequency.value = 0.07;
+    const wlfoG = ctx.createGain(); wlfoG.gain.value = 150;
+    wlfo.connect(wlfoG); wlfoG.connect(wf.frequency); wlfo.start(t); srcs.push(wlfo);
+
+    this.amb = { level, bus, srcs, timer: 0 };
+
+    // sparse bell motif drifting over the drone
+    const scale = level === 2 ? [293.66, 349.23, 440, 523.25, 587.33] : [220, 261.63, 329.63, 392, 440];
+    const motif = () => {
+      if (!this.amb) return;
+      if (this.enabled) {
+        const f = scale[Math.floor(Math.random() * scale.length)];
+        this.blip({ f0: f, dur: 1.8, type: 'sine', vol: 0.06, attack: 0.1 });
+        this.blip({ f0: f * 2, dur: 1.3, type: 'sine', vol: 0.025, attack: 0.12 });
+      }
+      this.amb.timer = window.setTimeout(motif, 3500 + Math.random() * 4500);
+    };
+    this.amb.timer = window.setTimeout(motif, 2500);
+  }
+
+  stopAmbience() {
+    if (!this.amb) return;
+    clearTimeout(this.amb.timer);
+    const t = this.now();
+    this.amb.bus.gain.cancelScheduledValues(t);
+    this.amb.bus.gain.setValueAtTime(this.amb.bus.gain.value, t);
+    this.amb.bus.gain.linearRampToValueAtTime(0.0001, t + 1);   // fade out then cut
+    for (const s of this.amb.srcs) { try { s.stop(t + 1.1); } catch { /* already stopped */ } }
+    this.amb = null;
+  }
+
   // pitched blip with an optional frequency glide and a percussive envelope
   private blip(o: { f0: number; f1?: number; dur: number; type?: OscType; vol?: number; attack?: number; delay?: number }) {
     if (!this.ctx || !this.master || !this.enabled) return;
