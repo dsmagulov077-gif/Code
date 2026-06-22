@@ -265,12 +265,13 @@ export function Cutscene({ onDone }: { onDone: () => void }) {
   }, []);
 
   return (
-    <div style={{ position: 'relative', lineHeight: 0 }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 40, background: '#000', lineHeight: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <canvas
         ref={canvasRef}
         width={CW}
         height={CH}
-        style={{ display: 'block', width: '100%', maxWidth: CW, borderRadius: 8, border: '2px solid #1a1a38', background: '#000' }}
+        style={{ display: 'block', height: '100%', width: 'auto', maxWidth: '100%', maxHeight: '100%', background: '#000' }}
       />
 
       {/* субтитры */}

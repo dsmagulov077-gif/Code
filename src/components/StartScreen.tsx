@@ -2,6 +2,7 @@
 interface Props {
   userEmail: string;
   onPlay: () => void;
+  onExit?: () => void;
 }
 
 const controls = [
@@ -13,31 +14,37 @@ const controls = [
   ['Q', 'Уворот'],
 ];
 
-export function StartScreen({ userEmail, onPlay }: Props) {
+export function StartScreen({ userEmail, onPlay, onExit }: Props) {
   const name = userEmail.split('@')[0] || 'Гость';
   return (
     <div
       style={{
-        position: 'relative',
-        borderRadius: 12,
-        border: '2px solid #1a1a38',
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
         overflow: 'hidden',
         background: 'radial-gradient(120% 120% at 50% 0%, #0c0c24 0%, #050510 60%, #020208 100%)',
         color: '#cfe2ff',
         fontFamily: 'monospace',
         textAlign: 'center',
-        padding: '54px 24px 40px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '40px 24px',
+        boxSizing: 'border-box',
       }}
     >
       {/* лёгкое свечение за заголовком */}
       <div
         style={{
           position: 'absolute',
-          top: 30,
+          top: '38%',
           left: '50%',
-          transform: 'translateX(-50%)',
-          width: 360,
-          height: 160,
+          transform: 'translate(-50%, -50%)',
+          width: 460,
+          height: 220,
+          maxWidth: '90%',
           background: 'radial-gradient(circle, rgba(102,136,255,0.22) 0%, transparent 70%)',
           pointerEvents: 'none',
         }}
@@ -100,6 +107,26 @@ export function StartScreen({ userEmail, onPlay }: Props) {
         <p style={{ marginTop: 30, fontSize: 12, color: '#3f4a6b' }}>
           Игрок: <span style={{ color: '#8fb4ff' }}>{name}</span>
         </p>
+
+        {onExit && (
+          <button
+            onClick={onExit}
+            style={{
+              marginTop: 14,
+              background: 'transparent',
+              color: '#8fb4ff',
+              fontFamily: 'monospace',
+              fontSize: 13,
+              letterSpacing: 2,
+              padding: '8px 26px',
+              borderRadius: 8,
+              border: '1px solid #2244aa',
+              cursor: 'pointer',
+            }}
+          >
+            ВЫХОД
+          </button>
+        )}
       </div>
     </div>
   );

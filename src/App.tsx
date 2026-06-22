@@ -33,21 +33,16 @@ export default function App() {
     );
   }
 
+  const logout = () => { if (session) supabase.auth.signOut(); setGuest(false); setStarted(false); setIntro(false); };
+
   return (
     <main style={{ maxWidth: 820, margin: '0 auto', padding: '16px 10px 48px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#6688ff' }}>VOID KNIGHT</span>
-        <button className="ghost" style={{ fontFamily: 'monospace', fontSize: 12 }}
-          onClick={() => { if (session) supabase.auth.signOut(); setGuest(false); setStarted(false); setIntro(false); }}>
-          Выйти
-        </button>
-      </header>
       {intro ? (
         <Cutscene onDone={() => { setIntro(false); setStarted(true); }} />
       ) : started ? (
         <HollowGame userEmail={session?.user.email ?? 'Гость'} onExit={() => setStarted(false)} />
       ) : (
-        <StartScreen userEmail={session?.user.email ?? 'Гость'} onPlay={() => setIntro(true)} />
+        <StartScreen userEmail={session?.user.email ?? 'Гость'} onPlay={() => setIntro(true)} onExit={logout} />
       )}
     </main>
   );

@@ -307,7 +307,7 @@ function buildLevel2(): GS {
   addGate(plats,gates,6150,'cz');
 
   // ── ROOM 5 — spike pit (6200–7600): ride the long platform across ──
-  addMover(plats,movers, 6320,330, 7380,330, 6.0, 0);
+  addMover(plats,movers, 6320,330, 7380,330, 11.0, 0);   // slower so it's rideable over the spikes
   plats.push({x:6880,y:300,w:90,h:16});           // a small island to breathe
 
   // ── ROOM 6 — lever AND two crystals, both needed for the gate ──
@@ -2354,19 +2354,6 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
   const [phase,  setPhase]  = useState<'play'|'dead'|'win'|'shop'|'portal'>('play');
   const [souls,  setSouls]  = useState(0);
   const [muted,  setMuted]  = useState(false);
-  const [fs,     setFs]     = useState(false);
-
-  // keep the fullscreen flag in sync with the browser (Esc, F11, etc.)
-  useEffect(()=>{
-    const onFs=()=>setFs(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange',onFs);
-    return ()=>document.removeEventListener('fullscreenchange',onFs);
-  },[]);
-
-  function toggleFs(){
-    if(!document.fullscreenElement) wrapRef.current?.requestFullscreen?.();
-    else document.exitFullscreen?.();
-  }
 
   // Single persistent game loop — never duplicated; pausing is a flag, not a new loop
   useEffect(()=>{
@@ -2522,8 +2509,9 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
   }
 
   return (
-    <div style={{display:'flex',flexDirection:'column',gap:10}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+    <div style={{position:'fixed',inset:0,zIndex:40,background:'#000',
+      display:'flex',flexDirection:'column',gap:6,padding:6,boxSizing:'border-box'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flex:'0 0 auto'}}>
         <span style={{fontSize:13,color:'var(--soft)',fontFamily:'monospace'}}>
           {userEmail.split('@')[0]} — Void Knight
         </span>
@@ -2541,19 +2529,11 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
         </div>
       </div>
 
-      <div ref={wrapRef} style={{position:'relative',lineHeight:0,
-        ...(fs?{display:'flex',alignItems:'center',justifyContent:'center',background:'#000',width:'100%',height:'100%'}:{})}}>
+      <div ref={wrapRef} style={{position:'relative',lineHeight:0,flex:'1 1 auto',minHeight:0,
+        display:'flex',alignItems:'center',justifyContent:'center',background:'#000'}}>
         <canvas ref={canvasRef} width={VW} height={VH}
-          style={fs
-            ? {display:'block',width:'auto',height:'100vh',maxWidth:'none',maxHeight:'100vh',borderRadius:0,border:'none'}
-            : {display:'block',width:'100%',maxWidth:VW,borderRadius:8,border:'2px solid #1a1a38'}}/>
-
-        {/* fullscreen toggle — stays reachable inside fullscreen too */}
-        <button onClick={toggleFs} title={fs?'Выйти из полноэкранного режима':'Полный экран'}
-          style={{position:'absolute',top:8,right:8,zIndex:20,padding:'4px 9px',fontFamily:'monospace',fontSize:12,
-            background:'rgba(10,10,40,.6)',color:'#8fb4ff',border:'1px solid #2244aa',borderRadius:6,cursor:'pointer'}}>
-          {fs?'⤢ ВЫХОД':'⤢ ВЕСЬ ЭКРАН'}
-        </button>
+          style={{display:'block',height:'100%',width:'auto',maxWidth:'100%',maxHeight:'100%',
+            borderRadius:0,border:'none'}}/>
 
         {/* DEATH */}
         {phase==='dead'&&(
