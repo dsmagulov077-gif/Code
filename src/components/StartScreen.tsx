@@ -1,12 +1,15 @@
-// Главный экран игры — показывается перед запуском, чтобы игра не стартовала сразу.
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import { sfx } from '../lib/sfx';
 
 interface Props {
   userEmail: string;
+  userId?: string | null;
   onPlay: () => void;
   onExit?: () => void;
 }
+
+type ReviewStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 const controls = [
   ['A / D', 'Движение'],
@@ -17,7 +20,11 @@ const controls = [
   ['Q', 'Уворот'],
 ];
 
-export function StartScreen({ userEmail, onPlay, onExit }: Props) {
+export function StartScreen({ userEmail, userId, onPlay, onExit }: Props) {
+  const [reviewsOpen, setReviewsOpen] = useState(false);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
+
   useEffect(() => {
     sfx.stopMusic();
   }, []);
@@ -28,7 +35,24 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
     sfx.startMusic('cave');
     onPlay();
   };
+
+  const submitReview = async () => {
+    const body = reviewText.trim();
+    if (!userId || body.length < 3 || reviewStatus === 'saving') return;
+
+    setReviewStatus('saving');
+    const { error } = await supabase.from('reviews').insert({ user_id: userId, body });
+    if (error) {
+      setReviewStatus('error');
+      return;
+    }
+    setReviewText('');
+    setReviewStatus('saved');
+  };
+
   const name = userEmail.split('@')[0] || 'Гость';
+  const canSubmitReview = Boolean(userId && reviewText.trim().length >= 3 && reviewStatus !== 'saving');
+
   return (
     <div
       style={{
@@ -48,7 +72,6 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
         boxSizing: 'border-box',
       }}
     >
-      {/* лёгкое свечение за заголовком */}
       <div
         style={{
           position: 'absolute',
@@ -62,6 +85,7 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
           pointerEvents: 'none',
         }}
       />
+
       <div style={{ position: 'relative' }}>
         <h1
           style={{
@@ -96,6 +120,27 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
           }}
         >
           ИГРАТЬ
+        </button>
+
+        <button
+          onClick={() => setReviewsOpen(true)}
+          style={{
+            display: 'block',
+            margin: '16px auto 0',
+            background: 'rgba(9, 18, 46, 0.72)',
+            color: '#8fb4ff',
+            fontFamily: 'monospace',
+            fontSize: 15,
+            fontWeight: 800,
+            letterSpacing: 2,
+            padding: '11px 34px',
+            borderRadius: 8,
+            border: '1px solid #3157d6',
+            boxShadow: '0 0 16px rgba(49,87,214,0.22)',
+            cursor: 'pointer',
+          }}
+        >
+          ОТЗЫВЫ
         </button>
 
         <div
@@ -141,6 +186,117 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
           </button>
         )}
       </div>
+
+      {reviewsOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 3,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            background: 'rgba(1, 2, 10, 0.74)',
+          }}
+        >
+          <div
+            style={{
+              width: 'min(430px, 100%)',
+              borderRadius: 10,
+              border: '1px solid #3157d6',
+              background: 'linear-gradient(180deg, #101735 0%, #070b1d 100%)',
+              boxShadow: '0 0 34px rgba(49,87,214,0.34)',
+              padding: '24px 22px',
+              boxSizing: 'border-box',
+              textAlign: 'left',
+            }}
+          >
+            <h2 style={{ margin: '0 0 16px', color: '#8fb4ff', letterSpacing: 3, fontSize: 22 }}>
+              ОТЗЫВЫ
+            </h2>
+            <textarea
+              value={reviewText}
+              onChange={(e) => {
+                setReviewText(e.target.value);
+                if (reviewStatus !== 'idle') setReviewStatus('idle');
+              }}
+              maxLength={500}
+              placeholder={userId ? 'Напиши свой отзыв...' : 'Войди в аккаунт, чтобы написать отзыв'}
+              disabled={!userId || reviewStatus === 'saving'}
+              style={{
+                width: '100%',
+                minHeight: 140,
+                resize: 'vertical',
+                boxSizing: 'border-box',
+                margin: '4px 0 12px',
+                padding: '12px 13px',
+                border: '1px solid rgba(143,180,255,0.28)',
+                borderRadius: 8,
+                color: '#cfe2ff',
+                background: 'rgba(2,8,26,0.82)',
+                fontFamily: 'monospace',
+                fontSize: 14,
+                lineHeight: 1.45,
+                outline: 'none',
+              }}
+            />
+
+            {reviewStatus === 'saved' && (
+              <p style={{ margin: '0 0 12px', color: '#91f2b1', fontSize: 13 }}>
+                Отзыв сохранён.
+              </p>
+            )}
+            {reviewStatus === 'error' && (
+              <p style={{ margin: '0 0 12px', color: '#ff8fa3', fontSize: 13 }}>
+                Не получилось сохранить отзыв.
+              </p>
+            )}
+
+            <button
+              onClick={submitReview}
+              disabled={!canSubmitReview}
+              style={{
+                width: '100%',
+                background: canSubmitReview ? '#274bcc' : 'rgba(62,77,130,0.55)',
+                color: '#fff',
+                fontFamily: 'monospace',
+                fontSize: 14,
+                fontWeight: 800,
+                letterSpacing: 2,
+                padding: '11px 18px',
+                borderRadius: 8,
+                border: '1px solid #6688ff',
+                cursor: canSubmitReview ? 'pointer' : 'default',
+              }}
+            >
+              {reviewStatus === 'saving' ? 'ОТПРАВКА...' : 'ОТПРАВИТЬ'}
+            </button>
+            <button
+              onClick={() => {
+                setReviewsOpen(false);
+                setReviewStatus('idle');
+              }}
+              style={{
+                marginTop: 10,
+                width: '100%',
+                background: 'transparent',
+                color: '#8fb4ff',
+                fontFamily: 'monospace',
+                fontSize: 13,
+                fontWeight: 800,
+                letterSpacing: 2,
+                padding: '10px 18px',
+                borderRadius: 8,
+                border: '1px solid #2244aa',
+                cursor: 'pointer',
+              }}
+            >
+              ЗАКРЫТЬ
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

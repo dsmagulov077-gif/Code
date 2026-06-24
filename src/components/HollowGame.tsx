@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { sfx } from '../lib/sfx';
 import { PortalCutscene } from './PortalCutscene';
+import { EscapeCutscene } from './EscapeCutscene';
 
 /* ══════════ SETTINGS ══════════ */
 const VW = 800, VH = 450, WW = 11700;
@@ -81,13 +82,14 @@ interface Lever   { x:number; y:number; flag:string; on:boolean; cd:number }
 interface Gate    { plat:Plat; baseY:number; flag:string; open:number; opened:boolean }   // open 0..1 — slides up out of the way
 interface Mover   { plat:Plat; x0:number; y0:number; x1:number; y1:number; period:number; phase:number; dx:number; dy:number }
 interface Crystal { x:number; y:number; baseY:number; group:string; lit:boolean }   // baseY = surface the pedestal stands on
-interface Portal  { x:number; y:number; kind:'next'|'win'; t:number }
+interface Chest   { x:number; y:number; flag:string; opened:boolean; heal:number }
+interface Portal  { x:number; y:number; kind:'next'|'escape'|'win'; t:number }
 type PS = 'idle'|'run'|'jump'|'fall'|'atk'|'dash'|'dodge'|'wall'|'hurt'|'block'|'dead';
-type EK = 'crawler'|'flyer'|'jumper'|'sentinel'|'charger'|'boss';
+type EK = 'crawler'|'flyer'|'jumper'|'sentinel'|'charger'|'warden'|'boss';
 
 interface Plr {
   x:number; y:number; vx:number; vy:number; w:number; h:number;
-  hp:number; mhp:number; souls:number; st:PS; f:1|-1;
+  hp:number; mhp:number; souls:number; potions:number[]; st:PS; f:1|-1;
   og:boolean; ow:0|1|-1; jl:number; mj:number;
   da:boolean; dt:number; dd:1|-1; cd:boolean;
   dod:boolean; dodt:number; dodd:1|-1; dodk:boolean;   // dodge roll: active? timer, direction, key-edge
@@ -125,7 +127,7 @@ interface GS {
   level:number; ww:number;
   lanterns:Light[]; embernooks:Light[]; shafts:Shaft[];
   // puzzles (level 2)
-  levers:Lever[]; gates:Gate[]; movers:Mover[]; crystals:Crystal[];
+  levers:Lever[]; gates:Gate[]; movers:Mover[]; crystals:Crystal[]; chests:Chest[];
   czones:{flag:string;x0:number;x1:number}[];
   flags:Record<string,boolean>;
   portal:Portal|null; enterPortal:Portal|null;
@@ -221,7 +223,7 @@ const INIT_CPS: CP[] = [{x:2560,y:375,on:false},{x:5680,y:375,on:false}];
 function mkPlr(x:number,y:number): Plr {
   return {
     x,y,vx:0,vy:0,w:26,h:38,
-    hp:100,mhp:100,souls:0,st:'idle',f:1,
+    hp:100,mhp:100,souls:0,potions:[],st:'idle',f:1,
     og:false,ow:0,jl:2,mj:2,
     da:false,dt:0,dd:1,cd:false,
     dod:false,dodt:0,dodd:1,dodk:false,
@@ -242,6 +244,7 @@ function mkEne(id:number,k:EK,x:number,y:number): Ene {
     jumper:{w:24,h:40,hp:58},
     sentinel:{w:30,h:48,hp:52},   // temple turret — stationary ranged guardian
     charger:{w:56,h:34,hp:82},    // armored brute — winds up then rushes
+    warden:{w:72,h:78,hp:360},
     boss:{w:92,h:112,hp:600},
   };
   const s=sz[k];
@@ -260,14 +263,17 @@ function buildLevel1(): GS {
     cx:0,cy:0,t:0,bbar:false,shake:0,cpIdx:-1,
     level:1, ww:WW,
     lanterns:LANTERNS, embernooks:EMBERNOOKS, shafts:SHAFTS,
-    levers:[],gates:[],movers:[],crystals:[],czones:[],flags:{},
+    levers:[],gates:[],movers:[],crystals:[],chests:[],czones:[],flags:{},
     portal:null, enterPortal:null,
   };
 }
 
 /* ── LEVEL 2 (the deeper cave beyond the portal — long, puzzle-laden) ── */
-const L2_WW = 19200;
+const L2_WW = 26100;
 const GR_Y = 395, GR_H = 130;   // ground top + thickness (matches level 1)
+const WARDEN_ARENA_X0 = 24440;
+const WARDEN_ARENA_X1 = 26020;
+const WARDEN_SPAWN_X = 25120;
 
 // a portcullis gate: a tall pillar that slides up out of the corridor when its flag is set
 function addGate(plats:Plat[], gates:Gate[], x:number, flag:string){
@@ -284,12 +290,12 @@ function addMover(plats:Plat[], movers:Mover[], x0:number,y0:number,x1:number,y1
 }
 
 function buildLevel2(): GS {
-  const plats:Plat[]=[], gates:Gate[]=[], movers:Mover[]=[], levers:Lever[]=[], crystals:Crystal[]=[];
+  const plats:Plat[]=[], gates:Gate[]=[], movers:Mover[]=[], levers:Lever[]=[], crystals:Crystal[]=[], chests:Chest[]=[];
   const czones:{flag:string;x0:number;x1:number}[]=[];
   const G=(x0:number,x1:number)=>plats.push({x:x0,y:GR_Y,w:x1-x0,h:GR_H});
 
   // ── solid ground, broken by three spike pits (rooms lengthened; pits keep their tuned width) ──
-  G(0,4000);  G(5000,10400);  G(11800,14200);  G(15200,L2_WW);
+  G(0,4000);  G(5000,10400);  G(11800,14200);  G(15200,20000);  G(21000,23920);  G(WARDEN_ARENA_X0,L2_WW);
   plats.push({x:-26,y:40,w:26,h:355});           // left wall (you arrive here)
   plats.push({x:L2_WW-14,y:40,w:26,h:355});       // right wall (caps the level)
 
@@ -343,6 +349,41 @@ function buildLevel2(): GS {
   czones.push({flag:'g5',x0:15200,x1:17750});
   addGate(plats,gates,17750,'g5');
 
+  // ROOM 9 - treasure puzzle: light three relic crystals to unlock the potion chest
+  plats.push({x:18480,y:300,w:130,h:14});
+  plats.push({x:18880,y:238,w:150,h:14});
+  plats.push({x:19380,y:300,w:130,h:14});
+  crystals.push({x:18545,y:286,baseY:300,group:'ch1',lit:false});
+  crystals.push({x:18955,y:214,baseY:238,group:'ch1',lit:false});
+  crystals.push({x:19445,y:286,baseY:300,group:'ch1',lit:false});
+  chests.push({x:19720,y:GR_Y,flag:'ch1',opened:false,heal:45});
+
+  // ROOM 10 - longer spike pit before the hidden vault
+  addMover(plats,movers, 20100,350, 20360,230, 4.2, 0.15);
+  plats.push({x:20500,y:282,w:120,h:16});
+  addMover(plats,movers, 20800,230, 20800,360, 3.2, 1.1);
+
+  // ROOM 11 - lever chest: hit the high switch, then open the chest below
+  plats.push({x:21420,y:300,w:130,h:14});
+  plats.push({x:21720,y:236,w:170,h:14});
+  levers.push({x:21805,y:236,flag:'l3',on:false,cd:0});
+  chests.push({x:22150,y:GR_Y,flag:'l3',opened:false,heal:60});
+
+  // ROOM 12 - guarded chest: defeat the vault keepers for the final potion
+  czones.push({flag:'ch2',x0:22400,x1:23500});
+  plats.push({x:22680,y:290,w:130,h:14});
+  plats.push({x:23120,y:250,w:130,h:14});
+  chests.push({x:23560,y:GR_Y,flag:'ch2',opened:false,heal:80});
+
+  // ROOM 13 - separate boss arena: cross the gap, then the warden spawns inside
+  addMover(plats,movers, 24040,340, 24320,260, 4.4, 0.45);
+  plats.push({x:24200,y:230,w:110,h:16});
+  czones.push({flag:'boss2',x0:WARDEN_ARENA_X0,x1:WARDEN_ARENA_X1});
+  plats.push({x:24630,y:306,w:170,h:14});
+  plats.push({x:25040,y:238,w:170,h:14});
+  plats.push({x:25540,y:306,w:170,h:14});
+  addGate(plats,gates,25860,'boss2');
+
   // a few aerial ledges for combat footing
   plats.push({x:5400,y:280,w:130,h:14});
   plats.push({x:6100,y:300,w:120,h:14});
@@ -368,31 +409,87 @@ function buildLevel2(): GS {
     {k:'jumper',  x:16300,y:GR_Y},
     {k:'charger', x:16800,y:GR_Y},
     {k:'crawler', x:17200,y:GR_Y},
+    {k:'flyer',   x:19000,y:240},
+    {k:'sentinel',x:19550,y:GR_Y},
+    {k:'jumper',  x:22550,y:GR_Y},
+    {k:'charger', x:22900,y:GR_Y},
+    {k:'sentinel',x:23280,y:GR_Y},
   ];
 
   const lanterns:Light[]=[
     {x:360,y:280},{x:1800,y:240},{x:3900,y:160},{x:5400,y:250},{x:6800,y:200},
     {x:8160,y:200},{x:9400,y:250},{x:11000,y:240},{x:12380,y:185},{x:13180,y:250},
     {x:14800,y:240},{x:15600,y:250},{x:17000,y:230},{x:18600,y:240},
+    {x:19800,y:250},{x:20600,y:230},{x:21800,y:185},{x:23000,y:230},{x:23800,y:240},{x:24780,y:210},{x:25100,y:230},{x:25640,y:220},
   ];
-  const embernooks:Light[]=[ {x:1800,y:372},{x:5800,y:372},{x:8800,y:378},{x:12500,y:372},{x:16500,y:378} ];
-  const shafts:Shaft[]=[ {x:1500,w:120},{x:6200,w:140},{x:10800,w:130},{x:13500,w:140},{x:16800,w:150},{x:18800,w:140} ];
+  const embernooks:Light[]=[ {x:1800,y:372},{x:5800,y:372},{x:8800,y:378},{x:12500,y:372},{x:16500,y:378},{x:19720,y:372},{x:22150,y:372},{x:23560,y:372},{x:24800,y:372},{x:25580,y:372} ];
+  const shafts:Shaft[]=[ {x:1500,w:120},{x:6200,w:140},{x:10800,w:130},{x:13500,w:140},{x:16800,w:150},{x:18800,w:140},{x:21800,w:130},{x:23400,w:150},{x:24800,w:170},{x:25620,w:150} ];
 
   return {
     plr: mkPlr(80,350),
     ens: espawns.map((s,i)=>mkEne(i,s.k,s.x,s.y)),
     prjs:[], pts:[], floats:[],
     plats:[...plats, ...ceil],
-    cps: [{x:5400,y:375,on:false},{x:11900,y:375,on:false},{x:15300,y:375,on:false}],
+    cps: [{x:5400,y:375,on:false},{x:11900,y:375,on:false},{x:15300,y:375,on:false},{x:21180,y:375,on:false}],
     cx:0,cy:0,t:0,bbar:false,shake:0,cpIdx:-1,
     level:2, ww:L2_WW,
     lanterns, embernooks, shafts,
-    levers, gates, movers, crystals, czones, flags:{},
-    portal:{x:18600,y:300,kind:'win',t:0}, enterPortal:null,
+    levers, gates, movers, crystals, chests, czones, flags:{},
+    portal:{x:25930,y:300,kind:'escape',t:0}, enterPortal:null,
   };
 }
 
-function initLevel(n:number): GS { return n===2 ? buildLevel2() : buildLevel1(); }
+const L3_WW = 7600;
+
+function buildLevel3(): GS {
+  const plats:Plat[]=[], gates:Gate[]=[], movers:Mover[]=[], levers:Lever[]=[], crystals:Crystal[]=[], chests:Chest[]=[];
+  const czones:{flag:string;x0:number;x1:number}[]=[];
+  const G=(x0:number,x1:number,y=GR_Y)=>plats.push({x:x0,y,w:x1-x0,h:GR_H});
+
+  G(0,1100); G(1380,2320,365); G(2700,3650,330); G(4020,5100,365); G(5480,L3_WW);
+  plats.push({x:-26,y:40,w:26,h:355});
+  plats.push({x:L3_WW-14,y:40,w:26,h:355});
+
+  plats.push({x:700,y:300,w:130,h:14});
+  addMover(plats,movers, 1120,350, 1320,260, 5.2, 0.2);
+  plats.push({x:1780,y:282,w:130,h:16});
+  addMover(plats,movers, 2350,330, 2660,250, 6.0, 1.1);
+  plats.push({x:3040,y:250,w:150,h:14});
+  plats.push({x:3460,y:210,w:130,h:14});
+  addMover(plats,movers, 3720,330, 3970,240, 5.6, 0.65);
+  plats.push({x:4560,y:280,w:140,h:14});
+  addMover(plats,movers, 5120,340, 5440,260, 5.8, 1.5);
+  plats.push({x:6040,y:275,w:150,h:14});
+  plats.push({x:6600,y:230,w:150,h:14});
+
+  const espawns:ES[]=[
+    {k:'flyer',x:1550,y:245},
+    {k:'crawler',x:2920,y:330},
+    {k:'charger',x:4300,y:365},
+    {k:'flyer',x:5900,y:250},
+    {k:'jumper',x:6350,y:GR_Y},
+  ];
+  const lanterns:Light[]=[
+    {x:360,y:260},{x:1400,y:230},{x:3000,y:210},{x:4550,y:220},{x:6100,y:215},{x:7200,y:220},
+  ];
+  const embernooks:Light[]=[{x:820,y:372},{x:3050,y:310},{x:4620,y:342},{x:6120,y:372}];
+  const shafts:Shaft[]=[{x:900,w:150},{x:2600,w:140},{x:4200,w:160},{x:6400,w:160}];
+
+  return {
+    plr: mkPlr(80,350),
+    ens: espawns.map((s,i)=>mkEne(i,s.k,s.x,s.y)),
+    prjs:[], pts:[], floats:[],
+    plats:[...plats, ...buildCeiling(L3_WW, [])],
+    cps: [{x:2860,y:310,on:false},{x:5540,y:375,on:false}],
+    cx:0,cy:0,t:0,bbar:false,shake:0,cpIdx:-1,
+    level:3, ww:L3_WW,
+    lanterns, embernooks, shafts,
+    levers, gates, movers, crystals, chests, czones, flags:{},
+    portal:{x:7250,y:300,kind:'win',t:0}, enterPortal:null,
+  };
+}
+
+function initLevel(n:number): GS { return n===3 ? buildLevel3() : n===2 ? buildLevel2() : buildLevel1(); }
 function initGS(): GS { return initLevel(1); }
 
 /* ══════════ HELPERS ══════════ */
@@ -447,6 +544,23 @@ function applyDmgToPlr(gs:GS,dmg:number,_srcX?:number) {
   else sfx.play('hurt');
 }
 
+function usePotion(gs:GS) {
+  const p=gs.plr;
+  if(p.st==='dead' || p.potions.length===0) return;
+  if(p.hp>=p.mhp){
+    spawnFloat(gs,p.x+p.w/2,p.y-12,'HP FULL',C.tGold);
+    sfx.play('block');
+    return;
+  }
+  const heal=p.potions.shift()!;
+  const gained=Math.min(heal,p.mhp-p.hp);
+  p.hp=Math.min(p.mhp,p.hp+heal);
+  p.rg=0;
+  spawnPts(gs,p.x+p.w/2,p.y+p.h/2,22,C.soulG,4,3.5);
+  spawnFloat(gs,p.x+p.w/2,p.y-14,`HEAL +${gained}`,C.soulG);
+  sfx.play('checkpoint');
+}
+
 /* ══════════ DRAW — ANCIENT TEMPLE BACKGROUND (level 2) ══════════ */
 function drawTempleBG(ctx:CanvasRenderingContext2D,camX:number,t:number) {
   // warm sandstone haze sky
@@ -484,6 +598,67 @@ function drawTempleBG(ctx:CanvasRenderingContext2D,camX:number,t:number) {
   drawTempleColumns(ctx,camX,0.5,4,'#1a1207',300,80);
 }
 
+function drawEscapeBG(ctx:CanvasRenderingContext2D,camX:number,t:number) {
+  const g=ctx.createLinearGradient(0,0,0,VH);
+  g.addColorStop(0,'#090303');
+  g.addColorStop(0.42,'#2a0b04');
+  g.addColorStop(1,'#120805');
+  ctx.fillStyle=g; ctx.fillRect(0,0,VW,VH);
+
+  const blaze=ctx.createRadialGradient(VW*0.72,VH*0.64,8,VW*0.72,VH*0.64,VH*0.9);
+  blaze.addColorStop(0,'rgba(255,142,36,0.25)');
+  blaze.addColorStop(0.42,'rgba(255,70,18,0.11)');
+  blaze.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=blaze; ctx.fillRect(0,0,VW,VH);
+
+  ctx.save();
+  ctx.fillStyle='#160905';
+  for(let i=0;i<12;i++){
+    const sx=((i*170-Math.floor(camX*0.16))%(VW+260))-130;
+    const lean=Math.sin(i*1.7)*14;
+    ctx.save();
+    ctx.translate(sx+lean,40+(i%3)*12);
+    ctx.rotate(Math.sin(i)*0.08);
+    ctx.fillRect(-22,0,44,VH);
+    ctx.fillStyle='rgba(216,182,106,0.12)';
+    ctx.fillRect(-18,18,3,VH-80);
+    ctx.fillStyle='#160905';
+    ctx.restore();
+  }
+  ctx.restore();
+
+  ctx.fillStyle='#050202';
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  for(let x=0;x<=VW;x+=40){
+    const y=44+Math.sin((x+camX*0.12)*0.027)*18+Math.sin(x*0.09)*8;
+    ctx.lineTo(x,y);
+  }
+  ctx.lineTo(VW,0); ctx.closePath(); ctx.fill();
+
+  ctx.save();
+  ctx.strokeStyle='rgba(255,118,34,0.28)';
+  ctx.lineWidth=2;
+  for(let i=0;i<9;i++){
+    const sx=((i*231-Math.floor(camX*0.22))%(VW+120))-60;
+    ctx.beginPath();
+    ctx.moveTo(sx,44);
+    ctx.lineTo(sx+28*Math.sin(t+i),118+i%4*28);
+    ctx.lineTo(sx-12,190+i%3*24);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  for(let i=0;i<3;i++){
+    const y=270+i*45+Math.sin(t*1.4+i)*5;
+    const haze=ctx.createLinearGradient(0,y-20,0,y+20);
+    haze.addColorStop(0,'rgba(255,120,28,0)');
+    haze.addColorStop(0.5,'rgba(255,120,28,0.055)');
+    haze.addColorStop(1,'rgba(255,120,28,0)');
+    ctx.fillStyle=haze; ctx.fillRect(0,y-20,VW,40);
+  }
+}
+
 // A row of evenly-spaced temple columns with capitals & bases, in world parallax.
 function drawTempleColumns(ctx:CanvasRenderingContext2D,camX:number,par:number,n:number,col:string,gap:number,w:number) {
   ctx.fillStyle=col;
@@ -506,6 +681,7 @@ function drawTempleColumns(ctx:CanvasRenderingContext2D,camX:number,par:number,n
 
 /* ══════════ DRAW — BACKGROUND ══════════ */
 function drawBG(ctx:CanvasRenderingContext2D,camX:number,t:number,lvl=1) {
+  if(lvl===3){ drawEscapeBG(ctx,camX,t); return; }
   if(lvl===2){ drawTempleBG(ctx,camX,t); return; }
   const g=ctx.createLinearGradient(0,0,0,VH);
   g.addColorStop(0,C.sky0); g.addColorStop(1,C.sky2);
@@ -674,13 +850,168 @@ function drawArena(ctx:CanvasRenderingContext2D,camX:number,camY:number,t:number
 // Solid deep rock filling the whole bottom of the screen, below the floor surface.
 // Drawn before the spikes and platforms (which paint over it), so there is never
 // any black void visible beneath the ground or down inside the pits.
+function drawWardenArena(ctx:CanvasRenderingContext2D,gs:GS){
+  if(gs.level!==2) return;
+  const IN0=WARDEN_ARENA_X0, IN1=WARDEN_ARENA_X1, TOP=58, FLOOR=395;
+  const l=IN0-gs.cx, r=IN1-gs.cx, top=TOP-gs.cy, bot=FLOOR-gs.cy;
+  if(r<0||l>VW||bot<0||top>VH) return;
+  const W=r-l, H=bot-top;
+  const warden=gs.ens.find(e=>e.k==='warden');
+  const active=!!(warden && warden.hp>0);
+  const enraged=!!(active && warden && warden.ph>=1);
+  const pulse=0.55+Math.sin(gs.t*2.2)*0.45;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(l,top,W,H); ctx.clip();
+
+  const bg=ctx.createLinearGradient(0,top,0,bot);
+  bg.addColorStop(0,enraged?'#230905':'#120b05');
+  bg.addColorStop(0.5,enraged?'#5a2109':active?'#3a260c':'#2c210f');
+  bg.addColorStop(1,enraged?'#180502':'#100904');
+  ctx.fillStyle=bg; ctx.fillRect(l,top,W,H);
+
+  const cx=(IN0+IN1)/2-gs.cx;
+  const altarY=250-gs.cy;
+  const glow=ctx.createRadialGradient(cx,altarY,8,cx,altarY,active?230:160);
+  glow.addColorStop(0,enraged?`rgba(255,92,24,${0.34+pulse*0.18})`:active?`rgba(255,220,120,${0.22+pulse*0.16})`:'rgba(119,204,255,0.16)');
+  glow.addColorStop(0.45,enraged?'rgba(255,120,30,0.18)':active?'rgba(216,182,106,0.14)':'rgba(216,182,106,0.08)');
+  glow.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(cx,altarY,active?230:160,0,Math.PI*2); ctx.fill();
+
+  for(let x=IN0+40;x<IN1-20;x+=92){
+    const sx=x-gs.cx;
+    const panel=ctx.createLinearGradient(sx,top,sx+50,bot);
+    panel.addColorStop(0,C.tStoneSh);
+    panel.addColorStop(0.55,C.tStone);
+    panel.addColorStop(1,'#3a2912');
+    ctx.fillStyle=panel;
+    ctx.fillRect(sx,top+18,50,H-18);
+    ctx.fillStyle='rgba(216,182,106,0.22)';
+    ctx.fillRect(sx+5,top+26,3,H-46);
+    ctx.fillStyle='rgba(0,0,0,0.24)';
+    ctx.fillRect(sx+41,top+26,5,H-42);
+    ctx.fillStyle=C.tGoldD;
+    ctx.fillRect(sx-5,top+18,60,6);
+    ctx.fillRect(sx-5,bot-18,60,7);
+  }
+
+  const doorX=cx-52;
+  ctx.fillStyle='#140d08';
+  ctx.fillRect(doorX,top+74,104,bot-top-74);
+  ctx.strokeStyle=C.tGoldD; ctx.lineWidth=3;
+  ctx.strokeRect(doorX+8,top+86,88,bot-top-100);
+  ctx.save();
+  ctx.globalAlpha=0.28+pulse*0.18;
+  ctx.strokeStyle=enraged?C.ember:active?C.tGold:C.soulG;
+  ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+    ctx.beginPath(); ctx.arc(cx,top+154,26+i*23+pulse*5,0,Math.PI*2); ctx.stroke();
+  }
+  ctx.restore();
+
+  if(active && warden){
+    const wx=warden.x+warden.w/2-gs.cx;
+    if(warden.st==='slam'){
+      const a=0.22+Math.abs(Math.sin(gs.t*18))*0.28;
+      ctx.fillStyle=`rgba(255,120,35,${a})`;
+      ctx.fillRect(wx-(enraged?165:92),bot-7,(enraged?330:184),7);
+      ctx.strokeStyle='rgba(255,235,150,0.65)';
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.ellipse(wx,bot-8,enraged?166:96,enraged?28:18,0,0,Math.PI*2); ctx.stroke();
+    } else if(warden.st==='cast'){
+      ctx.save();
+      ctx.globalAlpha=0.22+pulse*0.18;
+      ctx.strokeStyle=C.soulG; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(wx,warden.y+warden.h*0.35-gs.cy,34+pulse*22,0,Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  for(const x of [IN0+90, IN1-90]){
+    const sx=x-gs.cx, bob=Math.sin(gs.t*1.8+x)*3;
+    ctx.strokeStyle='rgba(30,18,8,0.85)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(sx,top); ctx.lineTo(sx,top+72+bob); ctx.stroke();
+    ctx.save();
+    ctx.shadowColor=enraged?C.ember:C.tGold; ctx.shadowBlur=enraged?24:18;
+    ctx.fillStyle=enraged?`rgba(255,110,36,${0.68+pulse*0.2})`:`rgba(255,206,106,${0.62+pulse*0.18})`;
+    ctx.beginPath();
+    ctx.moveTo(sx,top+72+bob); ctx.lineTo(sx+10,top+92+bob); ctx.lineTo(sx,top+112+bob); ctx.lineTo(sx-10,top+92+bob);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  for(let i=0;i<18;i++){
+    const x=l+25+((i*71+Math.floor(gs.t*18))%(W-30));
+    const y=top+50+(i*37%220);
+    ctx.globalAlpha=0.08+0.05*Math.sin(gs.t*2+i);
+    ctx.fillStyle=i%3===0?C.tGold:C.tDust;
+    ctx.fillRect(x,y,2,2+i%3);
+  }
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+
+function drawEscapeFX(ctx:CanvasRenderingContext2D,gs:GS) {
+  if(gs.level!==3) return;
+  const hot=ctx.createLinearGradient(0,0,0,VH);
+  hot.addColorStop(0,'rgba(30,0,0,0.35)');
+  hot.addColorStop(0.55,'rgba(255,92,20,0.11)');
+  hot.addColorStop(1,'rgba(255,180,60,0.2)');
+  ctx.fillStyle=hot;
+  ctx.fillRect(0,0,VW,VH);
+
+  ctx.save();
+  for(let i=0;i<54;i++){
+    const wx=((i*277+Math.floor(gs.t*95))%(gs.ww+700))-350;
+    const sx=wx-gs.cx;
+    if(sx<-80||sx>VW+80) continue;
+    const y=((i*71+gs.t*(70+i%5*18))%(VH+140))-90;
+    ctx.save();
+    ctx.translate(sx,y);
+    ctx.rotate(gs.t*2+i);
+    ctx.globalAlpha=0.24+0.18*Math.sin(gs.t*4+i);
+    ctx.fillStyle=i%3===0?C.tGoldD:'#5e2b12';
+    ctx.fillRect(-3,-3,6+i%6,6+i%4);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<18;i++){
+    const sx=((i*97+Math.floor(gs.t*140))%(VW+120))-60;
+    const sy=VH-30-(i%5)*18;
+    const flame=0.5+Math.sin(gs.t*9+i)*0.4;
+    const fg=ctx.createRadialGradient(sx,sy,1,sx,sy,28+flame*18);
+    fg.addColorStop(0,`rgba(255,220,110,${0.25*flame})`);
+    fg.addColorStop(0.45,`rgba(255,90,24,${0.18*flame})`);
+    fg.addColorStop(1,'rgba(255,40,0,0)');
+    ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(sx,sy,38,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha=0.2+0.08*Math.sin(gs.t*8);
+  ctx.strokeStyle=C.ember;
+  ctx.lineWidth=2;
+  for(let x=300;x<gs.ww;x+=760){
+    const sx=x-gs.cx;
+    if(sx<-60||sx>VW+60) continue;
+    ctx.beginPath();
+    ctx.moveTo(sx,60);
+    ctx.lineTo(sx+40*Math.sin(gs.t+x),180);
+    ctx.lineTo(sx-20,300);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawBedrock(ctx:CanvasRenderingContext2D,camY:number,lvl=1) {
   const BR_TOP=415;                 // just below the floor surface (395), above the spike tips (426)
   const sy=BR_TOP-camY;
   if(sy>=VH) return;                // floor line already below the screen — nothing to fill
   const top=Math.max(0,sy);
   const g=ctx.createLinearGradient(0,top,0,VH);
-  if(lvl===2){ g.addColorStop(0,C.tStoneSh); g.addColorStop(1,'#140d05'); }   // dark sandstone
+  if(lvl>=2){ g.addColorStop(0,C.tStoneSh); g.addColorStop(1,'#140d05'); }   // dark sandstone
   else       { g.addColorStop(0,C.rockWarm); g.addColorStop(1,'#070509'); }   // warm dark cave rock
   ctx.fillStyle=g; ctx.fillRect(0,top,VW,VH-top);
 }
@@ -764,6 +1095,53 @@ function drawTemplePlat(ctx:CanvasRenderingContext2D,pl:Plat,sx:number,sy:number
 }
 
 // Carved coffered ceiling for the temple — flat dressed stone, no stalactites/vines.
+function drawEscapePlat(ctx:CanvasRenderingContext2D,pl:Plat,sx:number,sy:number,t:number) {
+  const g=ctx.createLinearGradient(0,sy,0,sy+pl.h);
+  g.addColorStop(0,'#7a4b24');
+  g.addColorStop(0.45,'#4a2412');
+  g.addColorStop(1,'#180806');
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.moveTo(sx,sy+2);
+  ctx.lineTo(sx+pl.w-8,sy);
+  ctx.lineTo(sx+pl.w,sy+pl.h);
+  ctx.lineTo(sx+8,sy+pl.h+2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle='rgba(255,184,80,0.38)';
+  ctx.fillRect(sx+3,sy,Math.max(0,pl.w-8),2);
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.fillRect(sx,sy+pl.h-3,pl.w,3);
+
+  ctx.save();
+  ctx.strokeStyle='rgba(255,98,26,0.55)';
+  ctx.lineWidth=1.4;
+  for(let x=sx+18+(Math.floor(pl.x)%31);x<sx+pl.w-12;x+=54){
+    ctx.beginPath();
+    ctx.moveTo(x,sy+3);
+    ctx.lineTo(x+12*Math.sin(t+pl.x),sy+pl.h*0.45);
+    ctx.lineTo(x-4,sy+pl.h-2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if(pl.w>120 && pl.h>20){
+    ctx.save();
+    ctx.globalAlpha=0.24;
+    ctx.fillStyle='#050202';
+    for(let x=sx+28;x<sx+pl.w;x+=72){
+      ctx.beginPath();
+      ctx.moveTo(x,sy+pl.h);
+      ctx.lineTo(x+18,sy+pl.h);
+      ctx.lineTo(x+8,sy+pl.h+12+(x%3)*5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 function drawTempleRoof(ctx:CanvasRenderingContext2D,pl:Plat,sx:number,sy:number) {
   const surf=sy+pl.h;
   const g=ctx.createLinearGradient(0,sy,0,surf);
@@ -791,6 +1169,7 @@ function drawPlats(ctx:CanvasRenderingContext2D,plats:Plat[],camX:number,camY:nu
     if(pl.gate) continue;      // puzzle gates are drawn as portcullises by drawGates
     const sx=pl.x-camX, sy=pl.y-camY;
     if(sx>VW+50||sx+pl.w<-50||sy>VH+50) continue;
+    if(lvl===3){ drawEscapePlat(ctx,pl,sx,sy,t); continue; }
     if(lvl===2){ drawTemplePlat(ctx,pl,sx,sy); continue; }   // ancient-temple masonry
     // base
     ctx.fillStyle=C.stone; ctx.fillRect(sx,sy,pl.w,pl.h);
@@ -862,6 +1241,77 @@ function drawPlats(ctx:CanvasRenderingContext2D,plats:Plat[],camX:number,camY:nu
 }
 
 /* ══════════ DRAW — CAVE ROOF ══════════ */
+function drawEscapeRoof(ctx:CanvasRenderingContext2D,pl:Plat,sx:number,sy:number,t:number) {
+  const surf=sy+pl.h;
+  const g=ctx.createLinearGradient(0,sy,0,surf);
+  g.addColorStop(0,'#050202');
+  g.addColorStop(0.65,'#190705');
+  g.addColorStop(1,'#4a1b0c');
+  ctx.fillStyle=g;
+  ctx.fillRect(sx,sy,pl.w,pl.h);
+
+  const baseX=Math.floor(pl.x);
+  ctx.fillStyle='rgba(0,0,0,0.36)';
+  for(let k=0;k<pl.w;k+=22){
+    const wx=baseX+k;
+    ctx.fillRect(sx+k+(wx%17), surf-10-(wx*5%34), 3, 3);
+  }
+
+  // Broken hanging slabs instead of regular temple coffers.
+  for(let k=0;k<pl.w;k+=54){
+    const wx=baseX+k;
+    const px=sx+k+(wx%19);
+    const len=18+(wx*11%46);
+    const half=10+(wx*7%10);
+    const rg=ctx.createLinearGradient(px,surf-4,px,surf+len);
+    rg.addColorStop(0,'#3d160a');
+    rg.addColorStop(1,'#080202');
+    ctx.fillStyle=rg;
+    ctx.beginPath();
+    ctx.moveTo(px-half,surf-3);
+    ctx.lineTo(px+half+(wx%9),surf-1);
+    ctx.lineTo(px+half*0.35,surf+len);
+    ctx.lineTo(px-half*0.45,surf+len*0.72);
+    ctx.closePath();
+    ctx.fill();
+
+    if(wx%3===0){
+      ctx.strokeStyle='rgba(255,92,24,0.36)';
+      ctx.lineWidth=1.3;
+      ctx.beginPath();
+      ctx.moveTo(px-2,surf+2);
+      ctx.lineTo(px+5*Math.sin(t+wx),surf+len*0.45);
+      ctx.lineTo(px-4,surf+len*0.9);
+      ctx.stroke();
+    }
+  }
+
+  // Glowing cracks across the ceiling lip.
+  ctx.save();
+  ctx.strokeStyle='rgba(255,118,34,0.42)';
+  ctx.lineWidth=1.5;
+  for(let k=14;k<pl.w;k+=96){
+    const x=sx+k+(baseX%23);
+    ctx.beginPath();
+    ctx.moveTo(x,surf-14);
+    ctx.lineTo(x+18*Math.sin(t+k),surf-5);
+    ctx.lineTo(x+4,surf+18);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Ash falling from the broken roof.
+  ctx.save();
+  for(let i=0;i<Math.floor(pl.w/90)+1;i++){
+    const x=sx+((i*87+Math.floor(t*46)+baseX)%(Math.max(1,pl.w)));
+    const y=surf+((i*43+Math.floor(t*70))%95);
+    ctx.globalAlpha=0.18+0.08*Math.sin(t*3+i);
+    ctx.fillStyle=i%2?'#d8b66a':'#5e2b12';
+    ctx.fillRect(x,y,2,4+i%3);
+  }
+  ctx.restore();
+}
+
 // Natural dark rock filling the top of the world down to a jagged stalactite
 // underside, with the odd hanging vine. World-space (camX/camY).
 function drawCeiling(ctx:CanvasRenderingContext2D,plats:Plat[],camX:number,camY:number,t:number,lvl=1) {
@@ -869,6 +1319,7 @@ function drawCeiling(ctx:CanvasRenderingContext2D,plats:Plat[],camX:number,camY:
     if(!isCeil(pl)||pl.gate) continue;   // gates can slide up past the ceiling line — never rock
     const sx=pl.x-camX, sy=pl.y-camY, surf=sy+pl.h;   // surf = the rock's lower edge on screen
     if(sx>VW+40||sx+pl.w<-40||surf<-60) continue;
+    if(lvl===3){ drawEscapeRoof(ctx,pl,sx,sy,t); continue; }
     if(lvl===2){ drawTempleRoof(ctx,pl,sx,sy); continue; }   // dressed-stone coffered ceiling
     // rock body — warm dark stone, lighter toward the lip
     const g=ctx.createLinearGradient(0,sy,0,surf);
@@ -1450,6 +1901,78 @@ function drawCharger(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number,
    draws the sinewy arm + clawed hand at distance L along `aim`.
    open: 1 = fingers splayed (reaching), 0 = clenched fist (holding the player).
    squeeze: extra clench pulse during the crush. ctx is already at the boss centre. */
+function drawWarden(ctx:CanvasRenderingContext2D,e:Ene,camX:number,camY:number,t:number) {
+  const sx=e.x-camX,sy=e.y-camY;
+  const slam=e.st==='slam';
+  const cast=e.st==='cast';
+  const enraged=e.ph>=1;
+  const pulse=0.55+Math.sin(t*(enraged?8:5)+e.id)*0.25;
+  ctx.save(); ctx.translate(sx+e.w/2,sy+e.h/2);
+  if(e.f===-1) ctx.scale(-1,1);
+
+  if(enraged){
+    ctx.save();
+    ctx.globalCompositeOperation='lighter';
+    ctx.globalAlpha=0.18+pulse*0.18;
+    ctx.shadowColor=C.ember;
+    ctx.shadowBlur=28;
+    ctx.fillStyle='rgba(255,90,22,0.45)';
+    ctx.beginPath(); ctx.ellipse(0,4,58,70,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  if(cast || slam || e.st==='phase'){
+    ctx.save();
+    ctx.globalAlpha=0.28+pulse*(enraged?0.34:0.2);
+    ctx.shadowColor=enraged?C.ember:C.tGold;
+    ctx.shadowBlur=24;
+    ctx.strokeStyle=slam||enraged?C.ember:C.soulG;
+    ctx.lineWidth=enraged?4:3;
+    ctx.beginPath(); ctx.ellipse(0,e.h/2-4,enraged?70:54,enraged?17:13,0,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
+  const body=ctx.createLinearGradient(0,-e.h/2,0,e.h/2);
+  body.addColorStop(0,enraged?'#e0a458':C.tStoneL);
+  body.addColorStop(0.45,enraged?'#a05a25':C.tStone);
+  body.addColorStop(1,enraged?'#3a160b':C.tStoneSh);
+  ctx.fillStyle=body;
+  ctx.beginPath();
+  ctx.moveTo(-26,-34); ctx.lineTo(26,-34); ctx.lineTo(34,20);
+  ctx.lineTo(18,38); ctx.lineTo(-18,38); ctx.lineTo(-34,20);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle=C.tGoldD; ctx.lineWidth=3; ctx.stroke();
+
+  ctx.fillStyle=C.tGold;
+  ctx.fillRect(-29,-28,58,5);
+  ctx.fillRect(-5,-32,10,66);
+  ctx.fillStyle=C.tGlyph;
+  ctx.fillRect(-2,-25,4,50);
+
+  ctx.save();
+  ctx.shadowColor=enraged?C.ember:cast?C.soulG:C.tGold;
+  ctx.shadowBlur=(enraged?28:16)+18*pulse;
+  ctx.fillStyle=enraged?'#ff7a24':cast?'#dff7ff':'#ffe680';
+  ctx.beginPath(); ctx.arc(0,-4,(enraged?11:8)+(cast?pulse*4:0),0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle=C.tStoneSh; ctx.lineWidth=8; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-24,-16); ctx.lineTo(-38,18+(slam?8:0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(24,-16); ctx.lineTo(38,18+(slam?8:0)); ctx.stroke();
+  ctx.strokeStyle=C.tGold; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(-39,20+(slam?8:0)); ctx.lineTo(-53,29+(slam?8:0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(39,20+(slam?8:0)); ctx.lineTo(53,29+(slam?8:0)); ctx.stroke();
+
+  ctx.fillStyle='#22170c';
+  ctx.fillRect(-24,36,16,9); ctx.fillRect(8,36,16,9);
+  ctx.restore();
+
+  const bw=72,bh=7,hp=e.hp/e.mhp;
+  ctx.fillStyle='rgba(0,0,0,.65)'; ctx.fillRect(sx+e.w/2-bw/2,sy-16,bw,bh);
+  ctx.fillStyle=enraged?C.ember:hp>.45?C.tGold:C.ember; ctx.fillRect(sx+e.w/2-bw/2,sy-16,bw*hp,bh);
+  ctx.strokeStyle='rgba(255,230,160,.55)'; ctx.strokeRect(sx+e.w/2-bw/2,sy-16,bw,bh);
+}
+
 function drawClaw(ctx:CanvasRenderingContext2D, aim:number, L:number, open:number, t:number, squeeze=0){
   const bone='#c9b89c';
   ctx.save(); ctx.translate(0,-2); ctx.rotate(aim);
@@ -1870,6 +2393,13 @@ function drawHUD(ctx:CanvasRenderingContext2D,gs:GS) {
   ctx.fillText(`SOULS  ${p.souls}`,18,52);
   ctx.restore();
 
+  ctx.save();
+  ctx.shadowColor=C.soulG; ctx.shadowBlur=p.potions.length>0?8:0;
+  ctx.fillStyle=p.potions.length>0?C.soulG:'rgba(120,140,160,.55)';
+  ctx.font='bold 12px monospace';
+  ctx.fillText(`POTIONS  ${p.potions.length}   H=USE`,18,92);
+  ctx.restore();
+
   // Abilities
   let ax=18;
   if(p.hDash){
@@ -1894,7 +2424,7 @@ function drawHUD(ctx:CanvasRenderingContext2D,gs:GS) {
 
   // Floor indicator
   ctx.fillStyle='rgba(180,200,255,.4)'; ctx.font='10px monospace';
-  ctx.fillText('L-CLICK=ATTACK  K=DASH  Q=DODGE  R-CLICK=SHIELD',VW*.5-150,VH-12);
+  ctx.fillText('L-CLICK=ATTACK  K=DASH  Q=DODGE  H=POTION  R-CLICK=SHIELD',VW*.5-180,VH-12);
 
   // Boss bar
   if(gs.bbar){
@@ -2104,7 +2634,7 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
         sfx.play(e.k==='boss'?'bosshit':'hit');
         if(e.hp<=0){
           spawnPts(gs,e.x+e.w/2,e.y+e.h/2,18,e.k==='boss'?C.bssGl:C.soul,4,3.5);
-          p.souls+=e.k==='boss'?120:e.k==='charger'?20:e.k==='sentinel'?16:e.k==='jumper'?14:10;
+          p.souls+=e.k==='boss'?120:e.k==='warden'?90:e.k==='charger'?20:e.k==='sentinel'?16:e.k==='jumper'?14:10;
           sfx.play('enemydeath');
         }
       }
@@ -2122,6 +2652,22 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
       for(const cr of gs.crystals){
         if(!cr.lit && overlap(hbX,hbY,hbW,hbH, cr.x-13, cr.y-18, 26, 30)){
           cr.lit=true; sfx.play('hit'); spawnPts(gs,cr.x,cr.y,16,C.soulG,3.5);
+        }
+      }
+      for(const ch of gs.chests){
+        if(ch.opened || !overlap(hbX,hbY,hbW,hbH, ch.x-22, ch.y-34, 44, 34)) continue;
+        if(gs.flags[ch.flag]){
+          ch.opened=true;
+          p.potions.push(ch.heal);
+          spawnPts(gs,ch.x,ch.y-28,24,C.soulG,4,3.5);
+          spawnFloat(gs,ch.x,ch.y-52,`POTION +${ch.heal}`,C.soulG);
+          spawnFloat(gs,ch.x,ch.y-72,'STORED',C.tGold);
+          gs.shake=Math.max(gs.shake,.12);
+          sfx.play('checkpoint');
+        } else {
+          spawnPts(gs,ch.x,ch.y-24,6,C.tGoldD,2.2,2);
+          spawnFloat(gs,ch.x,ch.y-48,'LOCKED',C.tGold);
+          sfx.play('block');
         }
       }
     }
@@ -2188,6 +2734,15 @@ function updatePlayer(gs:GS, keys:Record<string,boolean>, dt:number) {
       settleOnGround(gs);  // plant firmly on the arena floor
       sfx.play('bossintro');
     }
+  }
+
+  if(gs.level===2 && !gs.flags.boss2Started && p.x>WARDEN_ARENA_X0+120){
+    gs.flags.boss2Started=true;
+    const nextId=gs.ens.reduce((m,e)=>Math.max(m,e.id),0)+1;
+    gs.ens.push(mkEne(nextId,'warden',WARDEN_SPAWN_X,GR_Y));
+    gs.shake=Math.max(gs.shake,.22);
+    spawnFloat(gs,WARDEN_SPAWN_X,GR_Y-120,'VAULT WARDEN',C.tGold);
+    sfx.play('bossintro');
   }
 
   // death fall
@@ -2317,6 +2872,91 @@ function updateEnemies(gs:GS, dt:number) {
       const charging = e.st==='charge';
       if(overlap(e.x,e.y,e.w,e.h,p.x,p.y,p.w,p.h)){ sfx.play('slam'); applyDmgToPlr(gs, charging?22:14, e.x+e.w/2); }
       moveX(e,gs.plats,dt); moveY(e,gs.plats,dt);
+
+    } else if(e.k==='warden'){
+      e.vy+=GRAV*dt; if(e.vy>840) e.vy=840;
+      const wasPh=e.ph;
+      e.ph=e.hp<e.mhp*.5 ? 1 : 0;
+      if(e.ph && !wasPh){
+        e.st='phase'; e.stT=0; e.vx=0; e.af=0;
+        gs.shake=Math.max(gs.shake,.72);
+        spawnPts(gs,e.x+e.w/2,e.y+e.h/2,62,C.ember,9,5);
+        spawnFloat(gs,e.x+e.w/2,e.y-30,'PHASE II',C.ember);
+        sfx.play('bossroar');
+      }
+      e.f=(dx>0?1:-1) as 1|-1;
+      if(e.st==='patrol'){
+        e.vx=e.f*(e.ph?72:54);
+        if(e.og && !groundAhead(e,e.f,gs.plats)) e.vx=0;
+        if(dist<(e.ph?660:520) && Math.abs(dy)<160){ e.st='guard'; e.stT=0; sfx.play('bossintro'); }
+      } else if(e.st==='phase'){
+        e.vx=0;
+        if(e.stT>0.36 && e.stT-dt<=0.36){
+          for(let i=0;i<16;i++){
+            const a=i*Math.PI/8;
+            gs.prjs.push({x:e.x+e.w/2,y:e.y+e.h*0.42,vx:Math.cos(a)*280,vy:Math.sin(a)*280,r:8,life:2.2,foe:true});
+          }
+          for(const dir of [-1,1]){
+            gs.prjs.push({x:e.x+e.w/2+dir*22,y:e.y+e.h-20,vx:dir*420,vy:-70,r:9,life:2.2,foe:true});
+          }
+          sfx.play('projectile');
+        }
+        if(e.stT>0.95){ e.st='guard'; e.stT=0; }
+      } else if(e.st==='guard'){
+        e.vx=(dx>0?1:-1)*(e.ph?130:72);
+        if(e.og && !groundAhead(e,e.f,gs.plats)) e.vx=0;
+        if(e.stT>(e.ph?0.48:1.05)){
+          e.af++;
+          e.st=e.ph ? (e.af%4===0?'slam':'cast') : e.af%2===0?'cast':'slam';
+          e.stT=0; e.vx=0;
+          sfx.play(e.st==='cast'?'lasercharge':'bosslaunch');
+        }
+      } else if(e.st==='slam'){
+        e.vx=0;
+        const slamT=e.ph?0.34:0.55;
+        if(e.stT>slamT && e.stT-dt<=slamT){
+          gs.shake=Math.max(gs.shake,e.ph ? .68 : .32);
+          spawnPts(gs,e.x+e.w/2,e.y+e.h,e.ph?54:26,e.ph?C.ember:C.tGold,e.ph?9:5,4.2);
+          sfx.play('slam');
+          if(Math.abs(dx)<(e.ph?165:96) && Math.abs((p.y+p.h)-(e.y+e.h))<42) applyDmgToPlr(gs,e.ph?42:26,e.x+e.w/2);
+          for(const dir of [-1,1]){
+            gs.prjs.push({x:e.x+e.w/2+dir*34,y:e.y+e.h-18,vx:dir*(e.ph?450:260),vy:-35,r:e.ph?10:8,life:e.ph?2.35:1.7,foe:true});
+          }
+          if(e.ph){
+            for(const dir of [-1,1]){
+              gs.prjs.push({x:e.x+e.w/2+dir*18,y:e.y+e.h-42,vx:dir*340,vy:-260,r:8,life:2.0,foe:true});
+              gs.prjs.push({x:e.x+e.w/2+dir*50,y:e.y+e.h-30,vx:dir*300,vy:-135,r:7,life:2.0,foe:true});
+            }
+          }
+        }
+        if(e.stT>(e.ph?0.58:0.95)){ e.st='recover'; e.stT=0; }
+      } else if(e.st==='cast'){
+        e.vx=0;
+        const castT=e.ph?0.32:0.7;
+        if(e.stT>castT && e.stT-dt<=castT){
+          const base=Math.atan2(dy,dx);
+          const count=e.ph?9:5;
+          const mid=(count-1)/2;
+          for(let i=0;i<count;i++){
+            const a=base+(i-mid)*(e.ph?0.13:0.18);
+            const spd=e.ph?430:300;
+            gs.prjs.push({x:e.x+e.w/2,y:e.y+e.h*0.34,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,r:e.ph?9:7,life:e.ph?2.25:2.4,foe:true});
+          }
+          if(e.ph){
+            for(const dir of [-1,1]){
+              gs.prjs.push({x:e.x+e.w/2+dir*26,y:e.y+e.h*0.55,vx:dir*210,vy:-310,r:8,life:2.1,foe:true});
+            }
+          }
+          sfx.play('projectile');
+        }
+        if(e.stT>(e.ph?0.62:1.05)){ e.st='recover'; e.stT=0; }
+      } else if(e.st==='recover'){
+        e.vx*=.82;
+        if(e.stT>(e.ph?0.16:0.45)) { e.st='guard'; e.stT=0; }
+      }
+      if(overlap(e.x,e.y,e.w,e.h,p.x,p.y,p.w,p.h)){ sfx.play('bossattack'); applyDmgToPlr(gs,e.ph?32:20,e.x+e.w/2); }
+      moveX(e,gs.plats,dt); moveY(e,gs.plats,dt);
+      e.x=clamp(e.x,WARDEN_ARENA_X0+20,WARDEN_ARENA_X1-20-e.w);
 
     } else if(e.k==='boss'){
       if(e.hp<=0){
@@ -2501,7 +3141,7 @@ function updateProjs(gs:GS, dt:number){
 
 /* ══════════ UPDATE — PUZZLES (level 2) ══════════ */
 function updatePuzzles(gs:GS, dt:number){
-  if(gs.level!==2) return;
+  if(gs.level<2) return;
   const f=gs.flags;
 
   // levers drive their flag directly
@@ -2516,6 +3156,7 @@ function updatePuzzles(gs:GS, dt:number){
   // combat zones: flag set when no living enemy remains in the span
   for(const z of gs.czones){
     if(f[z.flag]) continue;
+    if(z.flag==='boss2' && !f.boss2Started) continue;
     const any=gs.ens.some(e=>e.hp>0 && e.k!=='boss' && e.x+e.w/2>=z.x0 && e.x+e.w/2<=z.x1);
     if(!any) f[z.flag]=true;
   }
@@ -2637,6 +3278,70 @@ function drawCrystals(ctx:CanvasRenderingContext2D, crystals:Crystal[], camX:num
   }
 }
 
+function drawChests(ctx:CanvasRenderingContext2D, chests:Chest[], flags:Record<string,boolean>, camX:number, camY:number, t:number){
+  for(const ch of chests){
+    const sx=ch.x-camX, sy=ch.y-camY;
+    if(sx<-70||sx>VW+70) continue;
+    const unlocked=!!flags[ch.flag];
+    const glow=0.55+Math.sin(t*4+ch.x)*0.22;
+
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(sx,sy+2,28,6,0,0,Math.PI*2); ctx.fill();
+
+    if(unlocked && !ch.opened){
+      const aura=ctx.createRadialGradient(sx,sy-18,2,sx,sy-18,52);
+      aura.addColorStop(0,`rgba(119,204,255,${0.26+glow*0.12})`);
+      aura.addColorStop(1,'rgba(119,204,255,0)');
+      ctx.fillStyle=aura;
+      ctx.beginPath(); ctx.arc(sx,sy-18,52,0,Math.PI*2); ctx.fill();
+    }
+
+    const lidY=ch.opened ? sy-32 : sy-28;
+    ctx.fillStyle=ch.opened?'#6c4a22':'#8a5a24';
+    ctx.fillRect(sx-24,sy-24,48,24);
+    ctx.fillStyle=ch.opened?'#b68b45':'#d8a84c';
+    ctx.fillRect(sx-24,sy-24,48,5);
+    ctx.fillStyle='#3a2412';
+    ctx.fillRect(sx-26,sy-19,52,4);
+    ctx.fillStyle=C.tGoldD;
+    ctx.fillRect(sx-4,sy-24,8,24);
+    ctx.strokeStyle='#2a180c';
+    ctx.lineWidth=2;
+    ctx.strokeRect(sx-24,sy-24,48,24);
+
+    ctx.save();
+    ctx.translate(sx,lidY);
+    ctx.rotate(ch.opened?-0.32:0);
+    ctx.fillStyle=ch.opened?'#9a642b':'#a66b2b';
+    ctx.fillRect(-26,-10,52,12);
+    ctx.fillStyle=C.tGold;
+    ctx.fillRect(-24,-10,48,3);
+    ctx.strokeStyle='#2a180c';
+    ctx.strokeRect(-26,-10,52,12);
+    ctx.restore();
+
+    if(ch.opened){
+      ctx.save();
+      ctx.shadowColor=C.soulG; ctx.shadowBlur=15;
+      ctx.fillStyle=C.soul;
+      ctx.beginPath();
+      ctx.moveTo(sx,sy-42); ctx.lineTo(sx+8,sy-25); ctx.lineTo(sx,sy-16); ctx.lineTo(sx-8,sy-25);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#dff7ff';
+      ctx.fillRect(sx-2,sy-37,4,14);
+      ctx.restore();
+    } else if(!unlocked){
+      ctx.fillStyle='#151515';
+      ctx.fillRect(sx-7,sy-18,14,12);
+      ctx.strokeStyle=C.tGold;
+      ctx.beginPath(); ctx.arc(sx,sy-18,7,Math.PI,0); ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
 function drawPortal(ctx:CanvasRenderingContext2D, portal:Portal, camX:number, camY:number, t:number){
   const sx=portal.x-camX, sy=portal.y-camY;
   if(sx<-120||sx>VW+120) return;
@@ -2694,6 +3399,8 @@ function render(canvas:HTMLCanvasElement, gs:GS){
 
   drawBG(ctx,cx,t,gs.level);
   if(gs.level===1) drawArena(ctx,cx,cy,t);   // dramatic backdrop inside the boss chamber
+  drawWardenArena(ctx,gs);
+  drawEscapeFX(ctx,gs);
   drawBedrock(ctx,cy,gs.level);               // solid rock below the floor — no void beneath ground/pits
   drawSpikes(ctx,cx,cy);
   drawPlats(ctx,gs.plats,cx,cy,t,gs.level);
@@ -2703,6 +3410,7 @@ function render(canvas:HTMLCanvasElement, gs:GS){
   drawGates(ctx,gs.gates,cx,cy);
   drawCrystals(ctx,gs.crystals,cx,cy,t);
   drawLevers(ctx,gs.levers,cx,cy);
+  drawChests(ctx,gs.chests,gs.flags,cx,cy,t);
 
   // warm lights (lanterns, embers, god-rays) wash over the rock
   drawLights(ctx,cx,cy,t,gs.lanterns,gs.embernooks,gs.shafts);
@@ -2733,6 +3441,7 @@ function render(canvas:HTMLCanvasElement, gs:GS){
     else if(e.k==='jumper') drawJumper(ctx,e,cx,cy);
     else if(e.k==='sentinel') drawSentinel(ctx,e,cx,cy);
     else if(e.k==='charger') drawCharger(ctx,e,cx,cy,t);
+    else if(e.k==='warden') drawWarden(ctx,e,cx,cy,t);
     else if(e.k==='boss')  drawBoss(ctx,e,cx,cy,t);
   }
 
@@ -2769,7 +3478,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
   const pausedRef = useRef(false);   // true while a menu (shop/dead/win) is up
   const activeRef = useRef(false);   // enemies stay frozen until the player makes their first move
 
-  const [phase,  setPhase]  = useState<'play'|'dead'|'win'|'shop'|'portal'>('play');
+  const [phase,  setPhase]  = useState<'play'|'dead'|'win'|'shop'|'portal'|'escape'>('play');
   const [souls,  setSouls]  = useState(0);
   const [muted,  setMuted]  = useState(false);
 
@@ -2819,6 +3528,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
         const kind=gs.enterPortal.kind;
         gs.enterPortal=null; pausedRef.current=true;
         if(kind==='win'){ sfx.play('win'); setPhase('win'); }
+        else if(kind==='escape'){ sfx.play('win'); setPhase('escape'); }
         else setPhase('portal');
         return;
       }
@@ -2847,8 +3557,9 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     const down=(e:KeyboardEvent)=>{
       const k=norm(e); if(k===null) return;
       sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
-      sfx.startMusic(gsRef.current.level===2?'temple':'cave');
+      sfx.startMusic(gsRef.current.level>=2?'temple':'cave');
       activeRef.current=true; keysRef.current[k]=true; e.preventDefault();
+      if(k==='h' && !e.repeat) usePotion(gsRef.current);
       if(k.length===1){
         combo=(combo+k).slice(-4);
         if(combo==='skip'){ combo=''; skipStage(); }
@@ -2869,7 +3580,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     const down=(e:MouseEvent)=>{
       activeRef.current=true;
       sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
-      sfx.startMusic(gsRef.current.level===2?'temple':'cave');
+      sfx.startMusic(gsRef.current.level>=2?'temple':'cave');
       if(e.button===0){ keysRef.current['attack']=true; e.preventDefault(); }
       else if(e.button===2){ keysRef.current['block']=true; e.preventDefault(); }
     };
@@ -2907,7 +3618,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     // keep the upgrades / souls the player earned in level 1
     const np=gs.plr;
     np.mhp=prev.mhp; np.hp=prev.mhp; np.dmg=prev.dmg; np.mj=prev.mj; np.jl=prev.mj;
-    np.hShield=prev.hShield; np.sh=1; np.souls=prev.souls;
+    np.hShield=prev.hShield; np.sh=1; np.souls=prev.souls; np.potions=[...prev.potions];
     gsRef.current=gs;
     keysRef.current={};
     pausedRef.current=false;
@@ -2917,10 +3628,27 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     setPhase('play');
   }
 
+  function goLevel3(){
+    sfx.setMusicTheme('temple');
+    const prev=gsRef.current.plr;
+    const gs=initLevel(3);
+    const np=gs.plr;
+    np.mhp=prev.mhp; np.hp=prev.hp; np.dmg=prev.dmg; np.mj=prev.mj; np.jl=prev.mj;
+    np.hShield=prev.hShield; np.sh=1; np.souls=prev.souls; np.potions=[...prev.potions];
+    gsRef.current=gs;
+    keysRef.current={};
+    pausedRef.current=false;
+    activeRef.current=false;
+    sfx.startAmbience(3);
+    sfx.startMusic('temple');
+    setPhase('play');
+  }
+
   // Secret cheat: skip the current stage. Level 1 → deeper cave (level 2); level 2 → victory.
   function skipStage(){
     if(pausedRef.current) return;           // ignore while in a menu / cutscene
     if(gsRef.current.level===1) goLevel2();
+    else if(gsRef.current.level===2) goLevel3();
     else { pausedRef.current=true; sfx.play('win'); setPhase('win'); }
   }
 
@@ -2949,10 +3677,10 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
         </span>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
           <span style={{fontSize:11,color:'var(--soft)',fontFamily:'monospace'}}>
-            L-Click=Attack (↑+Click=up)  R-Click=Shield  K=Dash  Q=Dodge  W/Space=Jump  A/D=Move
+            L-Click=Attack (↑+Click=up)  R-Click=Shield  H=Potion  K=Dash  Q=Dodge  W/Space=Jump  A/D=Move
           </span>
           <button
-            onClick={()=>{ const m=!muted; setMuted(m); sfx.init(); sfx.resume(); sfx.startMusic(gsRef.current.level===2?'temple':'cave'); sfx.setEnabled(!m); }}
+            onClick={()=>{ const m=!muted; setMuted(m); sfx.init(); sfx.resume(); sfx.startMusic(gsRef.current.level>=2?'temple':'cave'); sfx.setEnabled(!m); }}
             title={muted?'Включить звук':'Выключить звук'}
             style={{padding:'4px 8px',fontFamily:'monospace',fontSize:12,background:'#0a0a28',
               color:muted?'#666688':'#6688ff',border:'1px solid #2244aa',borderRadius:6,cursor:'pointer'}}>
@@ -2994,6 +3722,10 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
         {/* PORTAL TRANSITION → deeper cave */}
         {phase==='portal'&&(
           <PortalCutscene onDone={goLevel2}/>
+        )}
+
+        {phase==='escape'&&(
+          <EscapeCutscene onDone={goLevel3}/>
         )}
 
         {/* WIN — the deeper cave cleared */}

@@ -22,7 +22,7 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  if (loading) return <main className="container"><p>Загрузка…</p></main>;
+  if (loading) return <main className="container"><p>Загрузка...</p></main>;
 
   if (!session && !guest) {
     return (
@@ -33,7 +33,12 @@ export default function App() {
     );
   }
 
-  const logout = () => { if (session) supabase.auth.signOut(); setGuest(false); setStarted(false); setIntro(false); };
+  const logout = () => {
+    if (session) supabase.auth.signOut();
+    setGuest(false);
+    setStarted(false);
+    setIntro(false);
+  };
 
   return (
     <main style={{ maxWidth: 820, margin: '0 auto', padding: '16px 10px 48px' }}>
@@ -42,7 +47,12 @@ export default function App() {
       ) : started ? (
         <HollowGame userEmail={session?.user.email ?? 'Гость'} onExit={() => setStarted(false)} />
       ) : (
-        <StartScreen userEmail={session?.user.email ?? 'Гость'} onPlay={() => setIntro(true)} onExit={logout} />
+        <StartScreen
+          userEmail={session?.user.email ?? 'Гость'}
+          userId={session?.user.id ?? null}
+          onPlay={() => setIntro(true)}
+          onExit={logout}
+        />
       )}
     </main>
   );
