@@ -2847,6 +2847,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     const down=(e:KeyboardEvent)=>{
       const k=norm(e); if(k===null) return;
       sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
+      sfx.startMusic(gsRef.current.level===2?'temple':'cave');
       activeRef.current=true; keysRef.current[k]=true; e.preventDefault();
       if(k.length===1){
         combo=(combo+k).slice(-4);
@@ -2860,7 +2861,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
   },[]);
 
   // silence the ambient bed when the game unmounts (e.g. back to the main menu)
-  useEffect(()=>()=>sfx.stopAmbience(),[]);
+  useEffect(()=>()=>{ sfx.stopAmbience(); sfx.stopMusic(); },[]);
 
   // Mouse — LEFT CLICK attacks, RIGHT CLICK raises the shield (hold either). Unlocks audio too.
   useEffect(()=>{
@@ -2868,6 +2869,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     const down=(e:MouseEvent)=>{
       activeRef.current=true;
       sfx.init(); sfx.resume(); sfx.startAmbience(gsRef.current.level);   // unlock audio + ambient bed
+      sfx.startMusic(gsRef.current.level===2?'temple':'cave');
       if(e.button===0){ keysRef.current['attack']=true; e.preventDefault(); }
       else if(e.button===2){ keysRef.current['block']=true; e.preventDefault(); }
     };
@@ -2887,16 +2889,19 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
   },[]);
 
   function restart(){
+    sfx.setMusicTheme('cave');
     gsRef.current=initGS();
     keysRef.current={};
     pausedRef.current=false;
     activeRef.current=false;   // freeze enemies again until the player makes the first move
     sfx.startAmbience(1);      // back to the level-1 ambient track
+    sfx.startMusic('cave');
     setPhase('play');
   }
 
   // portal transition finished → carry the player's progress into the deeper cave (level 2)
   function goLevel2(){
+    sfx.setMusicTheme('temple');
     const prev=gsRef.current.plr;
     const gs=initLevel(2);
     // keep the upgrades / souls the player earned in level 1
@@ -2908,6 +2913,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     pausedRef.current=false;
     activeRef.current=false;
     sfx.startAmbience(2);   // switch to the deeper-cave ambient track
+    sfx.startMusic('temple');
     setPhase('play');
   }
 
@@ -2946,7 +2952,7 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
             L-Click=Attack (↑+Click=up)  R-Click=Shield  K=Dash  Q=Dodge  W/Space=Jump  A/D=Move
           </span>
           <button
-            onClick={()=>{ const m=!muted; setMuted(m); sfx.init(); sfx.resume(); sfx.setEnabled(!m); }}
+            onClick={()=>{ const m=!muted; setMuted(m); sfx.init(); sfx.resume(); sfx.startMusic(gsRef.current.level===2?'temple':'cave'); sfx.setEnabled(!m); }}
             title={muted?'Включить звук':'Выключить звук'}
             style={{padding:'4px 8px',fontFamily:'monospace',fontSize:12,background:'#0a0a28',
               color:muted?'#666688':'#6688ff',border:'1px solid #2244aa',borderRadius:6,cursor:'pointer'}}>

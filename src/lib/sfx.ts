@@ -2,10 +2,15 @@
 // A single lazily-created AudioContext; resume() must run after a user gesture.
 
 type OscType = OscillatorType;
+type MusicTheme = 'cave' | 'temple';
 
 class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private musicGain: GainNode | null = null;
+  private musicTimer: number | null = null;
+  private musicStep = 0;
+  private musicTheme: MusicTheme = 'cave';
   enabled = true;
   private last: Record<string, number> = {};
 
@@ -28,6 +33,61 @@ class Sfx {
   }
 
   private now() { return this.ctx ? this.ctx.currentTime : 0; }
+
+  startMusic(theme: MusicTheme = this.musicTheme) {
+    this.musicTheme = theme;
+    if (!this.ctx || !this.master || this.musicTimer !== null) return;
+    this.musicGain = this.ctx.createGain();
+    this.musicGain.gain.value = 0.2;
+    this.musicGain.connect(this.master);
+    this.scheduleMusic();
+    this.musicTimer = window.setInterval(() => this.scheduleMusic(), 420);
+  }
+
+  stopMusic() {
+    if (this.musicTimer !== null) {
+      window.clearInterval(this.musicTimer);
+      this.musicTimer = null;
+    }
+    this.musicGain?.disconnect();
+    this.musicGain = null;
+  }
+
+  setMusicTheme(theme: MusicTheme) {
+    if (this.musicTheme === theme) return;
+    this.musicTheme = theme;
+    this.musicStep = 0;
+  }
+
+  private musicNote(f: number, t: number, dur: number, vol: number, type: OscType = 'triangle') {
+    if (!this.ctx || !this.musicGain || !this.enabled) return;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(this.musicGain);
+    osc.start(t); osc.stop(t + dur + 0.03);
+  }
+
+  private scheduleMusic() {
+    if (!this.ctx || !this.musicGain) return;
+    const t = this.now() + 0.04;
+    const caveBass = [55, 55, 65.41, 49, 55, 73.42, 65.41, 49];
+    const caveLead = [220, 261.63, 246.94, 196, 220, 293.66, 261.63, 196];
+    const templeBass = [65.41, 82.41, 98, 82.41, 73.42, 92.5, 110, 92.5];
+    const templeLead = [329.63, 392, 440, 392, 369.99, 493.88, 440, 392];
+    const bass = this.musicTheme === 'temple' ? templeBass : caveBass;
+    const lead = this.musicTheme === 'temple' ? templeLead : caveLead;
+    const i = this.musicStep % bass.length;
+    const temple = this.musicTheme === 'temple';
+    this.musicNote(bass[i], t, 0.72, temple ? 0.05 : 0.065, temple ? 'triangle' : 'sine');
+    if (i % 2 === 0) this.musicNote(lead[i], t + 0.06, 0.32, temple ? 0.045 : 0.038, 'triangle');
+    if (i === 3 || i === 7) this.musicNote(temple ? lead[(i + 2) % lead.length] : 110, t + 0.22, 0.2, temple ? 0.032 : 0.025, temple ? 'sine' : 'sawtooth');
+    this.musicStep++;
+  }
 
   // ── AMBIENT MUSIC BED ──────────────────────────────────────────────────────
   // A continuous, evolving drone (root chord + slow filter sweep + wind layer)

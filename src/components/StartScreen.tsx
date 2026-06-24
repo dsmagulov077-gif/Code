@@ -1,4 +1,7 @@
 // Главный экран игры — показывается перед запуском, чтобы игра не стартовала сразу.
+import { useEffect } from 'react';
+import { sfx } from '../lib/sfx';
+
 interface Props {
   userEmail: string;
   onPlay: () => void;
@@ -15,6 +18,16 @@ const controls = [
 ];
 
 export function StartScreen({ userEmail, onPlay, onExit }: Props) {
+  useEffect(() => {
+    sfx.stopMusic();
+  }, []);
+
+  const handlePlay = () => {
+    sfx.init();
+    sfx.resume();
+    sfx.startMusic('cave');
+    onPlay();
+  };
   const name = userEmail.split('@')[0] || 'Гость';
   return (
     <div
@@ -67,7 +80,7 @@ export function StartScreen({ userEmail, onPlay, onExit }: Props) {
         </p>
 
         <button
-          onClick={onPlay}
+          onClick={handlePlay}
           style={{
             background: 'linear-gradient(180deg, #3a5cff 0%, #2f6fe0 100%)',
             color: '#fff',
