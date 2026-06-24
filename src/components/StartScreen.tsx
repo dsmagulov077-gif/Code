@@ -11,6 +11,12 @@ interface Props {
 
 type ReviewStatus = 'idle' | 'saving' | 'saved' | 'error';
 
+interface Review {
+  id: string;
+  body: string;
+  created_at: string;
+}
+
 const controls = [
   ['A / D', 'Движение'],
   ['W / Пробел', 'Прыжок'],
@@ -24,6 +30,9 @@ export function StartScreen({ userEmail, userId, onPlay, onExit }: Props) {
   const [reviewsOpen, setReviewsOpen] = useState(false);
   const [reviewText, setReviewText] = useState('');
   const [reviewStatus, setReviewStatus] = useState<ReviewStatus>('idle');
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
 
   useEffect(() => {
     sfx.stopMusic();
@@ -36,16 +45,62 @@ export function StartScreen({ userEmail, userId, onPlay, onExit }: Props) {
     onPlay();
   };
 
+  useEffect(() => {
+    if (!reviewsOpen || !userId) {
+      setReviews([]);
+      setReviewsError('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadReviews = async () => {
+      setReviewsLoading(true);
+      setReviewsError('');
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('id, body, created_at')
+        .order('created_at', { ascending: false });
+
+      if (cancelled) return;
+
+      setReviewsLoading(false);
+      if (error) {
+        setReviewsError(error.message);
+        return;
+      }
+
+      setReviews(data ?? []);
+    };
+
+    void loadReviews();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewsOpen, userId]);
+
   const submitReview = async () => {
     const body = reviewText.trim();
     if (!userId || body.length < 3 || reviewStatus === 'saving') return;
 
     setReviewStatus('saving');
-    const { error } = await supabase.from('reviews').insert({ user_id: userId, body });
-    if (error) {
+    setReviewsError('');
+
+    const { data, error } = await supabase
+      .from('reviews')
+      .insert({ body })
+      .select('id, body, created_at')
+      .single();
+
+    if (error || !data) {
+      setReviewsError(error?.message ?? 'Отзыв не сохранился.');
       setReviewStatus('error');
       return;
     }
+
+    setReviews((current) => [data, ...current]);
     setReviewText('');
     setReviewStatus('saved');
   };
@@ -210,6 +265,8 @@ export function StartScreen({ userEmail, userId, onPlay, onExit }: Props) {
               padding: '24px 22px',
               boxSizing: 'border-box',
               textAlign: 'left',
+              maxHeight: 'calc(100vh - 40px)',
+              overflowY: 'auto',
             }}
           >
             <h2 style={{ margin: '0 0 16px', color: '#8fb4ff', letterSpacing: 3, fontSize: 22 }}>
@@ -272,6 +329,43 @@ export function StartScreen({ userEmail, userId, onPlay, onExit }: Props) {
             >
               {reviewStatus === 'saving' ? 'ОТПРАВКА...' : 'ОТПРАВИТЬ'}
             </button>
+            {reviewsError && (
+              <p style={{ margin: '12px 0 0', color: '#ff8fa3', fontSize: 12, lineHeight: 1.45 }}>
+                {reviewsError.includes('reviews')
+                  ? 'Таблица отзывов ещё не применена. Запусти npm run db:link, потом npm run db:push.'
+                  : reviewsError}
+              </p>
+            )}
+            <div style={{ marginTop: 16, display: 'grid', gap: 8 }}>
+              {reviewsLoading && (
+                <p style={{ margin: 0, color: '#5b6a99', fontSize: 12 }}>
+                  Загрузка отзывов...
+                </p>
+              )}
+              {!reviewsLoading && userId && reviews.length === 0 && (
+                <p style={{ margin: 0, color: '#5b6a99', fontSize: 12 }}>
+                  Пока нет отзывов.
+                </p>
+              )}
+              {reviews.map((review) => (
+                <div
+                  key={review.id}
+                  style={{
+                    border: '1px solid rgba(143,180,255,0.18)',
+                    borderRadius: 8,
+                    background: 'rgba(2,8,26,0.54)',
+                    padding: '10px 11px',
+                  }}
+                >
+                  <p style={{ margin: 0, color: '#cfe2ff', fontSize: 13, lineHeight: 1.45 }}>
+                    {review.body}
+                  </p>
+                  <p style={{ margin: '6px 0 0', color: '#4f5e86', fontSize: 11 }}>
+                    {new Date(review.created_at).toLocaleString('ru-RU')}
+                  </p>
+                </div>
+              ))}
+            </div>
             <button
               onClick={() => {
                 setReviewsOpen(false);
