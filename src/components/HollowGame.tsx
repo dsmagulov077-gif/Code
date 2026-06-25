@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { sfx } from '../lib/sfx';
 import { PortalCutscene } from './PortalCutscene';
 import { EscapeCutscene } from './EscapeCutscene';
@@ -3668,9 +3668,40 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
     setPhase('play');
   }
 
+  function wakeGameAudio(){
+    activeRef.current=true;
+    sfx.init();
+    sfx.resume();
+    sfx.startAmbience(gsRef.current.level);
+    sfx.startMusic(gsRef.current.level>=2?'temple':'cave');
+  }
+
+  function pressMobileKey(key:string, e:PointerEvent<HTMLButtonElement>){
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    wakeGameAudio();
+    keysRef.current[key]=true;
+    if(key==='h') usePotion(gsRef.current);
+  }
+
+  function releaseMobileKey(key:string, e:PointerEvent<HTMLButtonElement>){
+    e.preventDefault();
+    if(e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    keysRef.current[key]=false;
+  }
+
+  const mobileHold = (key:string) => ({
+    onPointerDown: (e:PointerEvent<HTMLButtonElement>) => pressMobileKey(key,e),
+    onPointerUp: (e:PointerEvent<HTMLButtonElement>) => releaseMobileKey(key,e),
+    onPointerCancel: (e:PointerEvent<HTMLButtonElement>) => releaseMobileKey(key,e),
+    onContextMenu: (e:PointerEvent<HTMLButtonElement>) => e.preventDefault(),
+  });
+
   return (
     <div style={{position:'fixed',inset:0,zIndex:40,background:'#000',
-      display:'flex',flexDirection:'column',gap:6,padding:6,boxSizing:'border-box'}}>
+      display:'flex',flexDirection:'column',gap:6,padding:6,boxSizing:'border-box',touchAction:'none'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flex:'0 0 auto'}}>
         <span style={{fontSize:13,color:'var(--soft)',fontFamily:'monospace'}}>
           {userEmail.split('@')[0]} — Void Knight
@@ -3693,7 +3724,29 @@ export function HollowGame({userEmail,onExit}:{userEmail:string;onExit?:()=>void
         display:'flex',alignItems:'center',justifyContent:'center',background:'#000'}}>
         <canvas ref={canvasRef} width={VW} height={VH}
           style={{display:'block',width:'100%',height:'100%',objectFit:'cover',
-            borderRadius:0,border:'none'}}/>
+            borderRadius:0,border:'none',touchAction:'none'}}/>
+
+        {phase==='play'&&(
+          <div className="mobile-controls" aria-label="Mobile game controls">
+            <div className="mobile-pad">
+              <div />
+              <button className="mobile-control" aria-label="Aim up" {...mobileHold('w')}>UP</button>
+              <div />
+              <button className="mobile-control" aria-label="Move left" {...mobileHold('a')}>LEFT</button>
+              <button className="mobile-control mobile-control-dim" aria-label="Aim down" {...mobileHold('s')}>DOWN</button>
+              <button className="mobile-control" aria-label="Move right" {...mobileHold('d')}>RIGHT</button>
+            </div>
+
+            <div className="mobile-actions">
+              <button className="mobile-control mobile-control-main" aria-label="Attack" {...mobileHold('attack')}>ATK</button>
+              <button className="mobile-control mobile-control-main" aria-label="Jump" {...mobileHold(' ')}>JUMP</button>
+              <button className="mobile-control" aria-label="Dash" {...mobileHold('k')}>DASH</button>
+              <button className="mobile-control" aria-label="Dodge" {...mobileHold('q')}>ROLL</button>
+              <button className="mobile-control" aria-label="Shield" {...mobileHold('block')}>BLOCK</button>
+              <button className="mobile-control mobile-control-dim" aria-label="Heal" {...mobileHold('h')}>HEAL</button>
+            </div>
+          </div>
+        )}
 
         {/* DEATH */}
         {phase==='dead'&&(

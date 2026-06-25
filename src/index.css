@@ -403,3 +403,94 @@ button.small { padding: 6px 10px; font-size: 14px; }
 .buddy-card-name { font-size: 10px; font-weight: 700; text-align: center; }
 .buddy-card-mult { font-size: 10px; font-weight: 800; }
 .buddy-card-tag  { font-size: 9px; color: #e53935; font-weight: 800; }
+
+.mobile-controls {
+  display: none;
+}
+
+@media (pointer: coarse), (max-width: 820px) {
+  .mobile-controls {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    z-index: 12;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .mobile-pad {
+    display: grid;
+    grid-template-columns: repeat(3, 54px);
+    grid-template-rows: repeat(2, 54px);
+    gap: 8px;
+    pointer-events: auto;
+  }
+
+  .mobile-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 58px);
+    gap: 8px;
+    pointer-events: auto;
+  }
+
+  .mobile-control {
+    width: 100%;
+    height: 54px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(143, 180, 255, 0.68);
+    background: rgba(4, 10, 30, 0.72);
+    color: #d9e7ff;
+    box-shadow: 0 0 16px rgba(49, 87, 214, 0.22);
+    font-family: monospace;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-control:active {
+    background: rgba(47, 111, 224, 0.86);
+    border-color: #cfe2ff;
+  }
+
+  .mobile-control-main {
+    background: rgba(39, 75, 204, 0.82);
+  }
+
+  .mobile-control-dim {
+    color: #8fb4ff;
+    background: rgba(5, 11, 28, 0.64);
+  }
+}
+
+@media (pointer: coarse) and (max-height: 520px) {
+  .mobile-controls {
+    left: 10px;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  .mobile-pad {
+    grid-template-columns: repeat(3, 46px);
+    grid-template-rows: repeat(2, 46px);
+    gap: 6px;
+  }
+
+  .mobile-actions {
+    grid-template-columns: repeat(3, 50px);
+    gap: 6px;
+  }
+
+  .mobile-control {
+    height: 46px;
+    font-size: 10px;
+  }
+}
